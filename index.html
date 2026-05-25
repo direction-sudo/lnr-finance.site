@@ -1,0 +1,2150 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LNR FINANCE - Plateforme Intelligente</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js">
+// ===== N8N WEBHOOKS CONFIG =====
+const N8N = {
+  scoring:    'https://lnrfinance.app.n8n.cloud/webhook/lnr-scoring-leads',
+  alerte:     'https://lnrfinance.app.n8n.cloud/webhook/lnr-alerte-email',
+  sequence:   'https://lnrfinance.app.n8n.cloud/webhook/lnr-sequence-email',
+  analyseCV:  'https://lnrfinance.app.n8n.cloud/webhook/lnr-analyse-cv',
+  auditVente: 'https://lnrfinance.app.n8n.cloud/webhook/lnr-audit-vente',
+  validation: 'https://lnrfinance.app.n8n.cloud/webhook/lnr-validation-dossier',
+  calcom:     'https://lnrfinance.app.n8n.cloud/webhook/lnr-calcom-rdv',
+  avertissement: 'https://lnrfinance.app.n8n.cloud/webhook/lnr-avertissement-rh',
+  paie:       'https://lnrfinance.app.n8n.cloud/webhook/lnr-calcul-paie',
+  pipeline:   'https://lnrfinance.app.n8n.cloud/webhook/lnr-nouveau-lead',
+};
+
+async function callN8N(url, data) {
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(data)
+    });
+    return await r.json();
+  } catch(e) {
+    console.error('Erreur n8n:', e);
+    return {error: e.message};
+  }
+}
+
+function showToast(msg, type='success') {
+  const t = document.createElement('div');
+  t.style.cssText = `position:fixed;bottom:24px;right:24px;z-index:9999;padding:12px 20px;border-radius:8px;font-size:14px;font-weight:500;box-shadow:0 4px 20px rgba(0,0,0,.4);background:${type==='success'?'#22c55e':type==='error'?'#ef4444':'#f59e0b'};color:#fff;`;
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 4000);
+}
+
+async function scorerLeadIA(btn) {
+  const row = btn.closest('tr');
+  const nom = row ? row.cells[0]?.textContent.trim() : 'Lead';
+  const age = row ? (row.cells[2]?.textContent.trim() || '65') : '65';
+  btn.disabled = true; btn.textContent = '⏳ Analyse...';
+  const res = await callN8N(N8N.scoring, {
+    nom, age, situation: 'Retraité', budget: '150', besoins: 'Mutuelle santé senior'
+  });
+  btn.disabled = false; btn.textContent = '🤖 Scorer IA';
+  if (res.score !== undefined) {
+    const badge = row?.querySelector('.badge') || row?.cells[4];
+    showToast(`Score IA : ${res.score}/100 — ${res.niveau}`);
+    if (badge) badge.style.background = res.score >= 70 ? '#22c55e' : res.score >= 50 ? '#f59e0b' : '#ef4444';
+  } else {
+    showToast('Erreur lors du scoring', 'error');
+  }
+}
+
+async function qualifierLeadIA() {
+  const leads = document.querySelectorAll('#sec-leads tr[data-owner]:not([style*="none"])');
+  showToast(`Qualification IA de ${leads.length} leads en cours...`, 'info');
+  let chauds = 0;
+  for (const row of leads) {
+    const nom = row.cells[0]?.textContent.trim() || 'Lead';
+    const age = row.cells[2]?.textContent.trim() || '65';
+    const res = await callN8N(N8N.scoring, {nom, age, situation:'Retraité', budget:'150', besoins:'Mutuelle santé senior'});
+    if (res.score >= 70) chauds++;
+    await new Promise(r => setTimeout(r, 300));
+  }
+  showToast(`✅ ${leads.length} leads analysés — ${chauds} leads chauds détectés`);
+}
+
+async function lancerDistributionEmail() {
+  const leads = document.querySelectorAll('#sec-leads tr[data-owner]:not([style*="none"])');
+  showToast(`Lancement séquence J1 pour ${leads.length} leads...`, 'info');
+  let ok = 0;
+  for (const row of leads) {
+    const nom = row.cells[0]?.textContent.trim() || '';
+    const parts = nom.split(' ');
+    const res = await callN8N(N8N.sequence, {
+      email: `${parts[0].toLowerCase()}.${(parts[1]||'lead').toLowerCase()}@example.com`,
+      prenom: parts[0], nom: parts[1] || '', sequence: 'J1'
+    });
+    if (!res.error) ok++;
+    await new Promise(r => setTimeout(r, 200));
+  }
+  showToast(`✅ Séquence J1 lancée pour ${ok} contacts`);
+}
+
+async function validerDossier(btn) {
+  const row = btn.closest('tr');
+  const ref = row?.cells[0]?.textContent.trim() || 'DOS-XXX';
+  const client = row?.cells[1]?.textContent.trim() || 'Client';
+  btn.disabled = true; btn.textContent = '⏳';
+  const res = await callN8N(N8N.validation, {
+    ref_dossier: ref, client, assureur: 'Neoliane',
+    cin: true, justif_domicile: true, rib: true, formulaire_adhesion: true
+  });
+  btn.disabled = false; btn.textContent = '✅ Valider';
+  showToast(res.valide ? `✅ Dossier ${ref} validé` : `⚠️ Documents manquants : ${res.docs_manquants}`, res.valide ? 'success' : 'info');
+}
+
+async function genererAvertissement(employe, motif) {
+  if (!employe) {
+    employe = prompt('Nom de l\'employé :') || '';
+    motif = prompt('Motif de l\'avertissement :') || '';
+  }
+  if (!employe || !motif) return;
+  showToast('Génération de la lettre en cours...', 'info');
+  const res = await callN8N(N8N.avertissement, {
+    employe, motif, date_faits: new Date().toLocaleDateString('fr-FR')
+  });
+  if (res.lettre) {
+    showToast('✅ Lettre générée et envoyée par email');
+  } else {
+    showToast('Erreur lors de la génération', 'error');
+  }
+}
+
+async function calculerPaieMensuelle() {
+  const salaire = prompt('Salaire brut (TND) :');
+  const employe = prompt('Nom de l\'employé :');
+  if (!salaire || !employe) return;
+  showToast('Calcul CNSS en cours...', 'info');
+  const res = await callN8N(N8N.paie, {
+    employe, salaire_brut: parseFloat(salaire),
+    mois: new Date().toLocaleDateString('fr-FR', {month:'long', year:'numeric'})
+  });
+  if (res.salaire_net) {
+    showToast(`Net : ${res.salaire_net} TND | CNSS : ${res.cnss_salarial} TND | IRPP : ${res.irpp} TND`);
+  } else {
+    showToast('Erreur calcul paie', 'error');
+  }
+}
+
+async function genererRapportMensuel() {
+  showToast('Génération du rapport en cours...', 'info');
+  await callN8N(N8N.alerte, {
+    sujet: 'Rapport Mensuel LNR Finance — ' + new Date().toLocaleDateString('fr-FR', {month:'long', year:'numeric'}),
+    message: 'Rapport mensuel demandé manuellement depuis l\'interface.'
+  });
+  showToast('✅ Rapport envoyé par email à la direction');
+}
+
+async function envoyerComptable() {
+  showToast('Envoi en cours...', 'info');
+  await callN8N(N8N.alerte, {
+    sujet: 'Données Paie Mensuelle — LNR Finance',
+    message: 'Données de paie du mois en pièce jointe (génération manuelle depuis interface).'
+  });
+  showToast('✅ Email envoyé au comptable');
+}
+
+</script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0f1117;--bg2:#1a1d2e;--bg3:#252840;--accent:#4f8ef7;--accent2:#7c5cbf;--success:#22c55e;--warning:#f59e0b;--danger:#ef4444;--text:#e2e8f0;--text2:#94a3b8;--border:#2d3158}
+body{font-family:'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+
+/* LOGIN */
+#loginPage{display:flex;align-items:center;justify-content:center;min-height:100vh;background:linear-gradient(135deg,#0f1117 0%,#1a1d2e 50%,#252840 100%)}
+.login-box{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:40px;width:420px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.login-logo{text-align:center;margin-bottom:30px}
+.login-logo h1{font-size:28px;color:var(--accent);font-weight:700}
+.login-logo p{color:var(--text2);font-size:14px;margin-top:4px}
+.role-select{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:20px}
+.role-btn{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px;cursor:pointer;color:var(--text2);font-size:12px;transition:.2s;text-align:center}
+.role-btn:hover,.role-btn.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;font-size:13px;color:var(--text2);margin-bottom:6px}
+.form-group input,.form-group select,.form-group textarea{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:14px;outline:none;transition:.2s}
+.form-group input:focus,.form-group select:focus,.form-group textarea:focus{border-color:var(--accent)}
+.form-group textarea{resize:vertical;min-height:80px}
+.btn{padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;transition:.2s;display:inline-flex;align-items:center;gap:6px}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{background:#3b7de8}
+.btn-success{background:var(--success);color:#fff}
+.btn-warning{background:var(--warning);color:#000}
+.btn-danger{background:var(--danger);color:#fff}
+.btn-secondary{background:var(--bg3);border:1px solid var(--border);color:var(--text)}
+.btn-secondary:hover{background:var(--border)}
+.btn-full{width:100%;justify-content:center}
+.btn-sm{padding:6px 12px;font-size:12px}
+
+/* APP LAYOUT */
+#app{display:none;min-height:100vh;flex-direction:column}
+.topbar{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 24px;height:56px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
+.topbar-brand{font-size:18px;font-weight:700;color:var(--accent)}
+.topbar-right{display:flex;align-items:center;gap:16px}
+.user-chip{background:var(--bg3);border:1px solid var(--border);border-radius:20px;padding:6px 14px;font-size:13px;display:flex;align-items:center;gap:8px}
+.avatar{width:28px;height:28px;border-radius:50%;background:var(--accent2);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff}
+.layout{display:flex;flex:1}
+.sidebar{width:240px;background:var(--bg2);border-right:1px solid var(--border);padding:16px 0 0;overflow-y:auto;position:sticky;top:56px;height:calc(100vh - 56px);display:flex;flex-direction:column}
+.sidebar-nav{flex:1;overflow-y:auto}
+.sidebar-footer{padding:12px 16px;border-top:1px solid var(--border);background:var(--bg2);flex-shrink:0}
+.sidebar-user{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.sidebar-user .avatar{width:32px;height:32px;border-radius:50%;background:var(--accent2);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0}
+.sidebar-user .info{flex:1;min-width:0}
+.sidebar-user .info .name{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sidebar-user .info .role{font-size:11px;color:var(--text2)}
+.btn-logout{width:100%;padding:8px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:8px;color:var(--danger);cursor:pointer;font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:6px;transition:.2s}
+.btn-logout:hover{background:rgba(239,68,68,.2);border-color:var(--danger)}
+.sidebar-section{margin-bottom:8px}
+.sidebar-label{font-size:10px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.1em;padding:8px 16px 4px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 16px;cursor:pointer;color:var(--text2);font-size:13px;transition:.15s;position:relative}
+.nav-item:hover{background:var(--bg3);color:var(--text)}
+.nav-item.active{background:rgba(79,142,247,.15);color:var(--accent);border-right:2px solid var(--accent)}
+.nav-badge{margin-left:auto;background:var(--accent);color:#fff;border-radius:10px;padding:2px 7px;font-size:10px;font-weight:700}
+.nav-badge.orange{background:var(--warning);color:#000}
+.nav-badge.red{background:var(--danger)}
+.main{flex:1;padding:24px;overflow-y:auto}
+
+/* SECTIONS */
+.section{display:none}
+.section.active{display:block}
+.page-header{margin-bottom:24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
+.page-title{font-size:20px;font-weight:700}
+.page-breadcrumb{font-size:12px;color:var(--text2);margin-top:2px}
+.page-actions{display:flex;gap:8px;flex-wrap:wrap}
+
+/* CARDS */
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
+.stat-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px}
+.stat-card .label{font-size:12px;color:var(--text2);margin-bottom:8px}
+.stat-card .value{font-size:28px;font-weight:700;color:var(--text)}
+.stat-card .change{font-size:12px;margin-top:4px}
+.stat-card .change.up{color:var(--success)}
+.stat-card .change.down{color:var(--danger)}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
+.card-title{font-size:15px;font-weight:600;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between}
+
+/* TABS */
+.tabs{display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:0}
+.tab-btn{padding:10px 18px;background:none;border:none;border-bottom:2px solid transparent;color:var(--text2);cursor:pointer;font-size:13px;font-weight:500;transition:.2s;margin-bottom:-1px}
+.tab-btn:hover{color:var(--text)}
+.tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab-content{display:none}
+.tab-content.active{display:block}
+
+/* TABLE */
+.table-wrap{overflow-x:auto;border-radius:8px;border:1px solid var(--border)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:var(--bg3);padding:10px 14px;text-align:left;font-weight:600;color:var(--text2);font-size:12px;text-transform:uppercase;letter-spacing:.05em}
+td{padding:10px 14px;border-top:1px solid var(--border);vertical-align:middle}
+tr:hover td{background:rgba(255,255,255,.02)}
+
+/* BADGES */
+.badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600}
+.badge-success{background:rgba(34,197,94,.15);color:var(--success)}
+.badge-warning{background:rgba(245,158,11,.15);color:var(--warning)}
+.badge-danger{background:rgba(239,68,68,.15);color:var(--danger)}
+.badge-info{background:rgba(79,142,247,.15);color:var(--accent)}
+.badge-gray{background:rgba(148,163,184,.15);color:var(--text2)}
+.badge-purple{background:rgba(124,92,191,.15);color:#a78bfa}
+
+/* SCORE BARS */
+.score-bar{display:flex;align-items:center;gap:8px}
+.score-bar .bar{flex:1;height:6px;background:var(--bg3);border-radius:3px;overflow:hidden}
+.score-bar .fill{height:100%;border-radius:3px;background:var(--accent)}
+
+/* FORMS */
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+.form-row.triple{grid-template-columns:1fr 1fr 1fr}
+.form-row.single{grid-template-columns:1fr}
+.form-section-title{font-size:13px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.08em;margin:20px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+.file-upload{border:2px dashed var(--border);border-radius:8px;padding:20px;text-align:center;cursor:pointer;transition:.2s}
+.file-upload:hover{border-color:var(--accent);background:rgba(79,142,247,.05)}
+.file-upload input[type=file]{display:none}
+.file-upload .icon{font-size:28px;margin-bottom:8px}
+.file-upload p{font-size:13px;color:var(--text2)}
+.file-upload .uploaded{margin-top:8px;font-size:12px;color:var(--success)}
+
+/* MODAL */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;align-items:center;justify-content:center;padding:20px}
+.modal-overlay.open{display:flex}
+.modal{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:28px;width:100%;max-width:620px;max-height:90vh;overflow-y:auto}
+.modal-lg{max-width:820px}
+.modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.modal-title{font-size:17px;font-weight:700}
+.modal-close{background:none;border:none;color:var(--text2);cursor:pointer;font-size:20px;padding:4px}
+.modal-close:hover{color:var(--text)}
+.modal-footer{display:flex;justify-content:flex-end;gap:10px;margin-top:24px;padding-top:16px;border-top:1px solid var(--border)}
+
+/* AGENTS STATUS */
+.agents-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-bottom:24px}
+.agent-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px}
+.agent-card .agent-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.agent-card .agent-name{font-weight:600;font-size:14px}
+.agent-card .agent-desc{font-size:12px;color:var(--text2);margin-bottom:12px}
+.agent-card .agent-status{font-size:11px;display:flex;align-items:center;gap:6px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--success);animation:pulse 2s infinite}
+.dot.offline{background:var(--danger);animation:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* CHARTS */
+.chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}
+.chart-grid.triple{grid-template-columns:1fr 1fr 1fr}
+.chart-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px}
+.chart-card h3{font-size:14px;font-weight:600;margin-bottom:16px;color:var(--text2)}
+.chart-wrap{position:relative;height:200px}
+
+/* ACTIVITY FEED */
+.activity-item{display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--border)}
+.activity-item:last-child{border-bottom:none}
+.activity-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);margin-top:5px;flex-shrink:0}
+.activity-dot.green{background:var(--success)}
+.activity-dot.orange{background:var(--warning)}
+.activity-dot.red{background:var(--danger)}
+.activity-content .title{font-size:13px;font-weight:500}
+.activity-content .meta{font-size:11px;color:var(--text2);margin-top:2px}
+
+/* CALENDAR */
+.calendar-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.calendar-nav h3{font-size:15px;font-weight:600}
+.cal-nav-btn{background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:6px 12px;color:var(--text);cursor:pointer;font-size:13px}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cal-day-header{text-align:center;font-size:11px;font-weight:700;color:var(--text2);padding:6px;text-transform:uppercase}
+.cal-day{background:var(--bg3);border-radius:8px;padding:8px;min-height:70px;cursor:pointer;transition:.2s;border:1px solid transparent}
+.cal-day:hover{border-color:var(--accent)}
+.cal-day.today{border-color:var(--accent);background:rgba(79,142,247,.1)}
+.cal-day.other-month{opacity:.3}
+.cal-day.weekend{background:rgba(255,255,255,.02)}
+.cal-day-num{font-size:12px;font-weight:600;margin-bottom:4px}
+.cal-event{font-size:10px;padding:2px 5px;border-radius:3px;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cal-event.blue{background:rgba(79,142,247,.3);color:var(--accent)}
+.cal-event.green{background:rgba(34,197,94,.3);color:var(--success)}
+.cal-event.orange{background:rgba(245,158,11,.3);color:var(--warning)}
+
+/* ALERTS */
+.alert-card{background:var(--bg2);border-left:3px solid var(--danger);border-radius:8px;padding:14px 16px;margin-bottom:10px}
+.alert-card.warning{border-left-color:var(--warning)}
+.alert-card.info{border-left-color:var(--accent)}
+.alert-card .alert-title{font-size:13px;font-weight:600;margin-bottom:4px}
+.alert-card .alert-desc{font-size:12px;color:var(--text2)}
+
+/* POKER */
+.poker-list{display:flex;flex-direction:column;gap:10px}
+.poker-item{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px 16px;display:flex;align-items:center;gap:12px}
+.poker-rank{width:28px;height:28px;border-radius:50%;background:var(--accent2);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0}
+.poker-info{flex:1}
+.poker-info .name{font-size:13px;font-weight:600}
+.poker-info .meta{font-size:11px;color:var(--text2)}
+.poker-leads{text-align:center;min-width:60px}
+.poker-leads .num{font-size:22px;font-weight:700;color:var(--accent)}
+.poker-leads .label{font-size:10px;color:var(--text2)}
+.poker-next-badge{background:rgba(34,197,94,.15);color:var(--success);border:1px solid var(--success);border-radius:20px;padding:3px 10px;font-size:11px;font-weight:600}
+.poker-quota-badge{background:rgba(239,68,68,.15);color:var(--danger);border:1px solid var(--danger);border-radius:20px;padding:3px 10px;font-size:11px}
+
+/* VALIDATION */
+.validation-steps{display:flex;align-items:center;gap:0;margin-bottom:20px;overflow-x:auto}
+.v-step{display:flex;align-items:center;gap:0;flex-shrink:0}
+.v-step-box{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px 14px;font-size:12px;text-align:center;min-width:110px}
+.v-step-box.active{background:rgba(79,142,247,.15);border-color:var(--accent);color:var(--accent)}
+.v-step-box.done{background:rgba(34,197,94,.15);border-color:var(--success);color:var(--success)}
+.v-step-arrow{color:var(--text2);font-size:16px;padding:0 4px}
+
+/* SCORE DIAL */
+.score-dial{text-align:center;padding:16px}
+.score-num{font-size:56px;font-weight:700;line-height:1}
+.score-num.green{color:var(--success)}
+.score-num.orange{color:var(--warning)}
+.score-num.red{color:var(--danger)}
+.score-label{font-size:13px;color:var(--text2);margin-top:4px}
+
+/* CRITERIA */
+.criteria-list{display:flex;flex-direction:column;gap:8px}
+.criteria-item{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--bg3);border-radius:8px;font-size:13px}
+.criteria-item .pts{font-weight:700;color:var(--accent)}
+
+/* INSTANTLY MODULE */
+.campaign-card{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:12px}
+.campaign-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.campaign-day{font-size:12px;font-weight:700;color:var(--accent);text-transform:uppercase;background:rgba(79,142,247,.15);padding:3px 10px;border-radius:20px}
+.campaign-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px}
+.camp-stat{text-align:center;background:var(--bg2);border-radius:6px;padding:8px}
+.camp-stat .v{font-size:18px;font-weight:700}
+.camp-stat .l{font-size:10px;color:var(--text2)}
+
+/* WORKFLOW STATUS */
+.wf-list{display:flex;flex-direction:column;gap:8px}
+.wf-item{display:flex;align-items:center;justify-content:space-between;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px 16px}
+.wf-info{flex:1}
+.wf-info .name{font-size:13px;font-weight:600}
+.wf-info .meta{font-size:11px;color:var(--text2)}
+.wf-stats{text-align:center;margin:0 16px;font-size:11px;color:var(--text2)}
+.wf-stats span{display:block;font-size:15px;font-weight:700;color:var(--text)}
+.wf-toggle{display:flex;align-items:center;gap:8px}
+
+/* SWITCH TOGGLE */
+.toggle{position:relative;display:inline-block;width:40px;height:22px}
+.toggle input{opacity:0;width:0;height:0}
+.toggle-slider{position:absolute;cursor:pointer;inset:0;background:var(--border);border-radius:22px;transition:.3s}
+.toggle-slider:before{position:absolute;content:"";height:16px;width:16px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s}
+.toggle input:checked+.toggle-slider{background:var(--success)}
+.toggle input:checked+.toggle-slider:before{transform:translateX(18px)}
+
+/* AUDIT CRITERIA */
+.audit-criteria{display:flex;flex-direction:column;gap:6px}
+.audit-row{display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg3);border-radius:6px;font-size:13px}
+.audit-row .criterion{flex:1}
+.audit-row .score-dots{display:flex;gap:3px}
+.audit-row .score-dot{width:12px;height:12px;border-radius:50%;background:var(--border)}
+.audit-row .score-dot.filled{background:var(--success)}
+.audit-row .score-dot.half{background:var(--warning)}
+
+/* INTEGRATION STATUS */
+.integrations-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.int-card{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px;display:flex;align-items:center;gap:12px}
+.int-icon{width:36px;height:36px;border-radius:8px;background:var(--bg2);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+.int-info .name{font-size:13px;font-weight:600}
+.int-info .status{font-size:11px;display:flex;align-items:center;gap:4px;margin-top:2px}
+.int-info .status.connected{color:var(--success)}
+.int-info .status.pending{color:var(--warning)}
+
+/* PROGRESS */
+.progress{background:var(--bg3);border-radius:4px;height:6px;overflow:hidden;margin-top:6px}
+.progress-bar{height:100%;border-radius:4px;background:var(--accent);transition:width .5s}
+.progress-bar.success{background:var(--success)}
+.progress-bar.warning{background:var(--warning)}
+.progress-bar.danger{background:var(--danger)}
+
+/* CONFIG PANEL */
+.config-section{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:12px}
+.config-section h4{font-size:13px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px}
+.config-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px}
+.config-row:last-child{border-bottom:none}
+.config-row .desc{font-size:11px;color:var(--text2);margin-top:2px}
+
+/* FUNNEL */
+.funnel{display:flex;flex-direction:column;gap:6px}
+.funnel-row{display:flex;align-items:center;gap:12px;font-size:12px}
+.funnel-bar-wrap{flex:1}
+.funnel-val{min-width:50px;text-align:right;font-weight:600}
+
+/* KPI TABLE */
+.kpi-table{font-size:12px}
+.kpi-table td:first-child{font-weight:600}
+.kpi-table td{padding:7px 12px}
+.trend-up{color:var(--success)}
+.trend-down{color:var(--danger)}
+
+/* VUE FILTRÉE BANNER */
+.filter-banner{background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.4);border-radius:8px;padding:10px 16px;margin-bottom:14px;font-size:13px;color:var(--warning);display:none;align-items:center;gap:8px}
+.filter-banner.visible{display:flex}
+/* HELPERS */
+.flex{display:flex}.gap-8{gap:8px}.gap-12{gap:12px}.items-center{align-items:center}.justify-between{justify-content:space-between}
+.mt-16{margin-top:16px}.mb-16{margin-bottom:16px}.mt-8{margin-top:8px}
+.text-sm{font-size:12px}.text-muted{color:var(--text2)}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+.section-divider{border:none;border-top:1px solid var(--border);margin:20px 0}
+.info-box{background:rgba(79,142,247,.08);border:1px solid rgba(79,142,247,.3);border-radius:8px;padding:12px 16px;font-size:13px;color:var(--accent);margin-bottom:16px}
+.warning-box{background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:8px;padding:12px 16px;font-size:13px;color:var(--warning);margin-bottom:16px}
+</style>
+</head>
+<body>
+
+<!-- ============ LOGIN PAGE ============ -->
+<div id="loginPage">
+  <div class="login-box">
+    <div class="login-logo">
+      <h1>🏢 LNR FINANCE</h1>
+      <p>Plateforme Intelligente de Gestion</p>
+    </div>
+    <div class="form-group">
+      <label>Votre rôle</label>
+      <div class="role-select">
+        <div class="role-btn active" onclick="selectRole('manager','M. Zakine','Manager')">👔 Manager</div>
+        <div class="role-btn" onclick="selectRole('gestion','Sarra/Linda','Gestion')">📋 Gestion</div>
+        <div class="role-btn" onclick="selectRole('commercial','Jean Dupont','Commercial')">💼 Commercial</div>
+        <div class="role-btn" onclick="selectRole('televendeur','Pierre Bernard','Télévendeur')">📞 Télévendeur</div>
+        <div class="role-btn" onclick="selectRole('rh','Agent RH','Agent RH')">👥 Agent RH</div>
+        <div class="role-btn" onclick="selectRole('it','Dridi Amine','IT / Admin')">⚙️ IT / Admin</div>
+      </div>
+    </div>
+    <div class="form-group"><label>Email professionnel</label><input type="email" id="loginEmail" placeholder="votre@lnr-finance.fr"></div>
+    <div class="form-group"><label>Mot de passe</label><input type="password" id="loginPwd" placeholder="••••••••"></div>
+    <button class="btn btn-primary btn-full" onclick="doLogin()">🔐 Connexion sécurisée</button>
+    <p style="text-align:center;font-size:11px;color:var(--text2);margin-top:12px">Connexion chiffrée SSL • SSO Enterprise</p>
+  </div>
+</div>
+
+<!-- ============ MAIN APP ============ -->
+<div id="app">
+  <div class="topbar">
+    <div class="topbar-brand">🏢 LNR FINANCE</div>
+    <div class="topbar-right">
+      <span style="font-size:12px;color:var(--text2)" id="topbarInfo">Plateforme Intelligente</span>
+      <div class="user-chip">
+        <div class="avatar" id="userAvatar">MZ</div>
+        <span id="userName">M. Zakine</span>
+        <span id="userRole" style="color:var(--text2);font-size:11px">Manager</span>
+      </div>
+    </div>
+  </div>
+  <div class="layout">
+    <!-- SIDEBAR -->
+    <div class="sidebar" id="sidebar">
+      <div class="sidebar-nav">
+      <div class="sidebar-section">
+        <div class="sidebar-label">Vue d'ensemble</div>
+        <div class="nav-item active" onclick="showSection('dashboard')">📊 Tableau de bord</div>
+      </div>
+      <div class="sidebar-section" id="nav-rh">
+        <div class="sidebar-label">Agent RH</div>
+        <div class="nav-item" onclick="showSection('recrutement')">🔍 Recrutement IA <span class="nav-badge" id="badge-recrutement">3</span></div>
+        <div class="nav-item" onclick="showSection('pointage')">⏱️ Pointage & Présences</div>
+        <div class="nav-item" onclick="showSection('cnss')">📄 Rapport CNSS</div>
+        <div class="nav-item" onclick="showSection('employes')">👥 Gestion Employés</div>
+      </div>
+      <div class="sidebar-section" id="nav-commercial">
+        <div class="sidebar-label">Agent Commercial</div>
+        <div class="nav-item" onclick="showSection('leads')">🎯 Leads & Qualification <span class="nav-badge" id="badge-leads">24</span></div>
+        <div class="nav-item" onclick="showSection('poker')">🃏 Distribution Poker</div>
+        <div class="nav-item" onclick="showSection('rdv')">📅 Prise de RDV <span class="nav-badge" id="badge-rdv">5</span></div>
+        <div class="nav-item" onclick="showSection('campagnes')">📧 Campagnes Instantly</div>
+      </div>
+      <div class="sidebar-section" id="nav-assurance">
+        <div class="sidebar-label">Agent Assurance</div>
+        <div class="nav-item" onclick="showSection('contrats')">📁 Dossiers Contrats <span class="nav-badge orange" id="badge-contrats">12</span></div>
+        <div class="nav-item" onclick="showSection('validation')">✅ Validation Hiérarchique <span class="nav-badge orange" id="badge-validation">4</span></div>
+        <div class="nav-item" onclick="showSection('audit')">🔍 Audit Qualité IA</div>
+      </div>
+      <div class="sidebar-section" id="nav-marketing">
+        <div class="sidebar-label">Agent Marketing</div>
+        <div class="nav-item" onclick="showSection('marketing')">📱 Réseaux Sociaux</div>
+        <div class="nav-item" onclick="showSection('analytics')">📈 Analytics & ROI</div>
+      </div>
+      <div class="sidebar-section" id="nav-system">
+        <div class="sidebar-label">Système</div>
+        <div class="nav-item" onclick="showSection('workflows')">⚡ Workflows n8n <span class="nav-badge" style="background:var(--success)">Online</span></div>
+        <div class="nav-item" onclick="showSection('parametres')">⚙️ Paramètres</div>
+        <div class="nav-item" onclick="showSection('documentation')">📚 Documentation</div>
+      </div>
+      </div><!-- end sidebar-nav -->
+      <!-- SIDEBAR FOOTER -->
+      <div class="sidebar-footer">
+        <div class="sidebar-user">
+          <div class="avatar" id="sidebarAvatar">MZ</div>
+          <div class="info">
+            <div class="name" id="sidebarName">M. Zakine</div>
+            <div class="role" id="sidebarRole">Manager</div>
+          </div>
+        </div>
+        <button class="btn-logout" onclick="doLogout()">↩ Déconnexion</button>
+      </div>
+    </div>
+
+    <!-- MAIN CONTENT -->
+    <div class="main">
+
+<!-- ===== DASHBOARD ===== -->
+<div class="section active" id="sec-dashboard">
+  <div class="page-header">
+    <div><div class="page-title">Tableau de bord</div><div class="page-breadcrumb">LNR FINANCE / Vue d'ensemble</div></div>
+    <div class="page-actions">
+      <span style="font-size:12px;color:var(--text2)">Mis à jour: <span id="lastUpdate"></span></span>
+      <button class="btn btn-sm btn-secondary">🔄 Actualiser</button>
+    </div>
+  </div>
+  <div class="stats-grid">
+    <div class="stat-card"><div class="label">Chiffre d'affaires (mois)</div><div class="value">€142.8K</div><div class="change up">+12.4% vs mois dernier</div></div>
+    <div class="stat-card"><div class="label">Contrats signés (mois)</div><div class="value">86</div><div class="change up">+8.2% conversion</div></div>
+    <div class="stat-card"><div class="label">Leads qualifiés</div><div class="value">1,247</div><div class="change up">+24 nouveaux aujourd'hui</div></div>
+    <div class="stat-card"><div class="label">Actions automatisées (24h)</div><div class="value">2,847</div><div class="change up">98.7% taux de succès</div></div>
+  </div>
+  <div class="chart-grid">
+    <div class="chart-card"><h3>Performance Commerciale</h3><div class="chart-wrap"><canvas id="chartPerf"></canvas></div></div>
+    <div class="chart-card"><h3>Répartition Contrats</h3><div class="chart-wrap"><canvas id="chartContrats"></canvas></div></div>
+  </div>
+  <div class="card">
+    <div class="card-title">Activité Temps Réel <span style="font-size:11px;color:var(--text2)">Dernières 24h</span></div>
+    <div class="activity-item"><div class="activity-dot green"></div><div class="activity-content"><div class="title">Nouveau contrat signé - Marie Dubois (Neoliane) par Jean Dupont</div><div class="meta">Il y a 3 minutes • Agent Assurance</div></div></div>
+    <div class="activity-item"><div class="activity-dot"></div><div class="activity-content"><div class="title">Candidature reçue - Pierre Martin (Télévendeur) - Score 8/10</div><div class="meta">Il y a 7 minutes • Agent RH</div></div></div>
+    <div class="activity-item"><div class="activity-dot green"></div><div class="activity-content"><div class="title">Lead qualifié - Robert Nicolas assigné (Score 85/100)</div><div class="meta">Il y a 12 minutes • Agent IA Leads</div></div></div>
+    <div class="activity-item"><div class="activity-dot orange"></div><div class="activity-content"><div class="title">Retard détecté - Sophie Martin (15 min) - Niveau 1</div><div class="meta">Il y a 18 minutes • Agent Pointage</div></div></div>
+    <div class="activity-item"><div class="activity-dot green"></div><div class="activity-content"><div class="title">Post publié - Facebook & Instagram (Engagement +23%)</div><div class="meta">Il y a 25 minutes • Agent Marketing</div></div></div>
+    <div class="activity-item"><div class="activity-dot"></div><div class="activity-content"><div class="title">Rapport CNSS - Mai 2026 généré et envoyé au comptable</div><div class="meta">Il y a 1 heure • Agent RH</div></div></div>
+    <div class="activity-item"><div class="activity-dot orange"></div><div class="activity-content"><div class="title">Email J3 envoyé - 47 leads seniors (taux ouverture: 42%)</div><div class="meta">Il y a 2 heures • Campagne Instantly</div></div></div>
+  </div>
+  <div><div style="font-size:15px;font-weight:600;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between">État des Agents IA <button class="btn btn-sm btn-secondary">🔄 Redémarrer tout</button></div>
+  <div class="agents-grid">
+    <div class="agent-card"><div class="agent-header"><span class="agent-name">Agent RH Recrutement</span><div class="dot"></div></div><div class="agent-desc">Analyse CV, scoring IA, notifications auto</div><div class="agent-status"><span class="dot"></span> En ligne • 3 candidatures en attente</div></div>
+    <div class="agent-card"><div class="agent-header"><span class="agent-name">Agent Pointage</span><div class="dot"></div></div><div class="agent-desc">Détection retards, avertissements 3 niveaux</div><div class="agent-status"><span class="dot"></span> En ligne • Prochain scan: 9h30</div></div>
+    <div class="agent-card"><div class="agent-header"><span class="agent-name">Agent CNSS</span><div class="dot"></div></div><div class="agent-desc">Calcul cotisations, rapports mensuels auto</div><div class="agent-status"><span class="dot"></span> En ligne • Prochain: 28 mai 9h00</div></div>
+    <div class="agent-card"><div class="agent-header"><span class="agent-name">Agent Qualification Leads</span><div class="dot"></div></div><div class="agent-desc">Scoring IA, distribution Poker, réintégration NRP</div><div class="agent-status"><span class="dot"></span> En ligne • 24 leads actifs</div></div>
+    <div class="agent-card"><div class="agent-header"><span class="agent-name">Agent Campagnes Instantly</span><div class="dot"></div></div><div class="agent-desc">Envois automatiques J1/J3/J7/J15, tracking</div><div class="agent-status"><span class="dot"></span> En ligne • 47 emails envoyés aujourd'hui</div></div>
+    <div class="agent-card"><div class="agent-header"><span class="agent-name">Agent Assurance</span><div class="dot"></div></div><div class="agent-desc">Vérification docs, relances auto, validation</div><div class="agent-status"><span class="dot"></span> En ligne • 4 dossiers incomplets</div></div>
+    <div class="agent-card"><div class="agent-header"><span class="agent-name">Agent Audit Qualité</span><div class="dot"></div></div><div class="agent-desc">Analyse transcriptions, scoring DeepSeek</div><div class="agent-status"><span class="dot"></span> En ligne • 2 audits en attente</div></div>
+  </div></div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+    <div class="card" style="margin-bottom:0">
+      <div class="card-title">Agenda du Jour</div>
+      <div class="calendar-nav">
+        <button class="cal-nav-btn" onclick="prevMonth()">◀</button>
+        <h3 id="calTitle"></h3>
+        <button class="cal-nav-btn" onclick="nextMonth()">▶</button>
+      </div>
+      <div class="cal-grid" id="calGrid"></div>
+    </div>
+    <div class="card" style="margin-bottom:0">
+      <div class="card-title">Alertes Prioritaires</div>
+      <div class="alert-card"><div class="alert-title">⚠️ Dossier incomplet J+7</div><div class="alert-desc">Client: Ahmed Ben Ali - Documents manquants: CIN, RIB</div><div class="alert-desc">Alerte envoyée à Manager + Gestion</div></div>
+      <div class="alert-card warning"><div class="alert-title">⏰ Réintégration NRP imminente</div><div class="alert-desc">5 leads NRP seront réintégrés dans 2h</div></div>
+      <div class="alert-card info"><div class="alert-title">💡 Entretien à programmer</div><div class="alert-desc">3 candidats qualifiés (score ≥7) sans date d'entretien</div></div>
+      <div class="alert-card warning"><div class="alert-title">📧 Campagne J7 - Taux ouverture faible</div><div class="alert-desc">28% d'ouverture sur la campagne J7 (seuil: 30%)</div></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ===== RECRUTEMENT ===== -->
+<div class="section" id="sec-recrutement">
+  <div class="page-header">
+    <div><div class="page-title">Agent RH — Recrutement</div><div class="page-breadcrumb">LNR FINANCE / Agent RH / Recrutement</div></div>
+    <div class="page-actions">
+      <button class="btn btn-sm btn-secondary" onclick="openModal('modalCandidat')">➕ Nouvelle Candidature</button>
+      <button class="btn btn-sm btn-secondary">📤 Exporter CSV</button>
+      <button class="btn btn-sm btn-primary">🔄 Actualiser</button>
+      <button class="btn btn-sm btn-secondary" onclick="switchTab('recrutement','config-recrutement')">⚙️ Config Agent IA</button>
+    </div>
+  </div>
+  <div class="stats-grid">
+    <div class="stat-card"><div class="label">Candidatures reçues (mois)</div><div class="value">47</div><div class="change up">+5 cette semaine</div></div>
+    <div class="stat-card"><div class="label">Qualifiés (score ≥7)</div><div class="value">12</div><div class="change">25.5% taux qualif</div></div>
+    <div class="stat-card"><div class="label">Entretiens programmés</div><div class="value">8</div><div class="change">3 cette semaine</div></div>
+    <div class="stat-card"><div class="label">Refusés / À recontacter</div><div class="value">27</div><div class="change down">-2 vs semaine dernière</div></div>
+  </div>
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab('recrutement','liste-candidats')">📋 Liste des Candidatures</button>
+    <button class="tab-btn" onclick="switchTab('recrutement','analyse-ia')">🤖 Analyse IA</button>
+    <button class="tab-btn" onclick="switchTab('recrutement','config-recrutement')">⚙️ Configuration</button>
+  </div>
+  <div class="tab-content active" id="tab-recrutement-liste-candidats">
+    <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+      <select class="form-group" style="margin:0;width:auto"><option>Tous les postes</option><option>Télévendeur</option><option>Chargé RDV</option><option>Chef d'équipe</option><option>Gestionnaire</option></select>
+      <select class="form-group" style="margin:0;width:auto"><option>Tous les statuts</option><option>Nouveau</option><option>Qualifié</option><option>À recontacter</option><option>Entretien</option><option>Refusé</option><option>Embauché</option></select>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Date</th><th>Nom</th><th>Téléphone</th><th>Email</th><th>Poste</th><th>Exp.</th><th>Score IA</th><th>Statut</th><th>CV</th><th>Actions</th></tr></thead>
+        <tbody>
+          <tr><td>21/05/2026</td><td><b>Jean Dupont</b></td><td>+216 12 345 678</td><td>jean.dupont@email.com</td><td>Télévendeur</td><td>3 ans</td><td><span style="color:var(--success);font-weight:700">8.5</span>/10</td><td><span class="badge badge-success">Qualifié</span></td><td><a href="#" style="color:var(--accent);font-size:12px">📄 CV.pdf</a></td><td><button class="btn btn-sm btn-primary">Entretien</button></td></tr>
+          <tr><td>20/05/2026</td><td><b>Marie Martin</b></td><td>+216 98 765 432</td><td>marie.martin@email.com</td><td>Chargé RDV</td><td>2 ans</td><td><span style="color:var(--success);font-weight:700">9.0</span>/10</td><td><span class="badge badge-info">Nouveau</span></td><td><a href="#" style="color:var(--accent);font-size:12px">📄 CV.pdf</a></td><td><button class="btn btn-sm btn-primary">Qualifier</button></td></tr>
+          <tr><td>19/05/2026</td><td><b>Ahmed Ben Ali</b></td><td>+216 55 123 456</td><td>ahmed.benali@email.com</td><td>Télévendeur</td><td>1 an</td><td><span style="color:var(--warning);font-weight:700">6.0</span>/10</td><td><span class="badge badge-warning">À recontacter</span></td><td><a href="#" style="color:var(--accent);font-size:12px">📄 CV.pdf</a></td><td><button class="btn btn-sm btn-secondary">Complément</button></td></tr>
+          <tr><td>18/05/2026</td><td><b>Sophie Bernard</b></td><td>+216 22 987 654</td><td>sophie.bernard@email.com</td><td>Chef d'équipe</td><td>5 ans</td><td><span style="color:var(--danger);font-weight:700">4.5</span>/10</td><td><span class="badge badge-danger">Refusé</span></td><td><a href="#" style="color:var(--accent);font-size:12px">📄 CV.pdf</a></td><td><button class="btn btn-sm btn-secondary">Voir</button></td></tr>
+          <tr><td>17/05/2026</td><td><b>Pierre Leroy</b></td><td>+216 44 555 666</td><td>pierre.leroy@email.com</td><td>Gestionnaire</td><td>4 ans</td><td><span style="color:var(--success);font-weight:700">8.0</span>/10</td><td><span class="badge badge-success">Qualifié</span></td><td><a href="#" style="color:var(--accent);font-size:12px">📄 CV.pdf</a></td><td><button class="btn btn-sm btn-primary">Entretien</button></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="tab-content" id="tab-recrutement-analyse-ia">
+    <div class="grid-2">
+      <div class="card" style="margin:0">
+        <div style="text-align:center;padding:12px">
+          <div class="score-num green" style="font-size:64px">8.5</div>
+          <div style="font-size:16px;font-weight:600;margin-top:8px">Jean Dupont</div>
+          <div style="font-size:12px;color:var(--text2)">Télévendeur mutuelle santé • Disponible immédiatement</div>
+          <div style="display:flex;justify-content:center;gap:6px;margin-top:10px">
+            <span class="badge badge-success">CV reçu</span>
+            <span class="badge badge-info">Analyse IA</span>
+            <span class="badge badge-success">WhatsApp envoyé</span>
+          </div>
+        </div>
+        <hr class="section-divider">
+        <div class="criteria-list">
+          <div class="criteria-item"><span>Expérience Call Center (3 ans)</span><span class="pts">+6 pts</span></div>
+          <div class="criteria-item"><span>Expérience Mutuelle Santé (Axa)</span><span class="pts">+4 pts</span></div>
+          <div class="criteria-item"><span>Disponibilité immédiate</span><span class="pts">+2 pts</span></div>
+          <div class="criteria-item"><span>Niveau Français (Excellent)</span><span class="pts">+2 pts</span></div>
+          <div class="criteria-item"><span>Stabilité professionnelle (>2 ans)</span><span class="pts">+1 pt</span></div>
+        </div>
+      </div>
+      <div class="card" style="margin:0">
+        <div class="card-title">Détails analyse</div>
+        <div class="info-box">✅ Score ≥ 7 → Proposition d'entretien envoyée par WhatsApp</div>
+        <div class="form-group"><label>Points forts</label><textarea readonly style="font-size:12px">Bonne expérience en centre d'appels, connaissance du secteur assurance santé, disponibilité immédiate, excellente expression écrite.</textarea></div>
+        <div class="form-group"><label>Points à creuser</label><textarea readonly style="font-size:12px">Aucune mention des résultats commerciaux précédents. Vérifier les références lors de l'entretien.</textarea></div>
+        <div class="flex gap-8">
+          <button class="btn btn-primary" style="flex:1">📅 Programmer entretien</button>
+          <button class="btn btn-secondary" style="flex:1">📩 Envoyer WhatsApp</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="tab-content" id="tab-recrutement-config-recrutement">
+    <div class="grid-2">
+      <div class="card" style="margin:0">
+        <div class="card-title">⚙️ Paramètres Agent Recrutement</div>
+        <div class="form-group"><label>Score minimum qualification</label><input type="number" value="7" min="0" max="10"></div>
+        <div class="form-group"><label>Délai réponse candidat (heures)</label><input type="number" value="24" min="1"></div>
+        <div class="form-group"><label>Modèle IA</label><select><option>DeepSeek API (Cloud)</option><option>Ollama Llama 3.2 (Local)</option></select></div>
+        <div class="form-group"><label>Canal notification</label><select><option>WhatsApp + Email</option><option>WhatsApp uniquement</option><option>Email uniquement</option></select></div>
+        <button class="btn btn-primary btn-full">💾 Sauvegarder</button>
+      </div>
+      <div class="card" style="margin:0">
+        <div class="card-title">📊 Critères de scoring IA</div>
+        <div class="criteria-list">
+          <div class="criteria-item"><span>Expérience call center</span><span class="pts">+2 pts/an (max 6)</span></div>
+          <div class="criteria-item"><span>Expérience mutuelle santé</span><span class="pts">+4 pts</span></div>
+          <div class="criteria-item"><span>Disponibilité immédiate</span><span class="pts">+2 pts</span></div>
+          <div class="criteria-item"><span>Bon niveau français</span><span class="pts">+2 pts</span></div>
+          <div class="criteria-item"><span>Stabilité professionnelle (>2 ans)</span><span class="pts">+1 pt</span></div>
+        </div>
+        <div class="info-box" style="margin-top:12px">Score sur 10 • Score ≥7 → Entretien • Score 5-6 → Complément • Score &lt;5 → Refus</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ===== POINTAGE ===== -->
+<div class="section" id="sec-pointage">
+  <div class="page-header">
+    <div><div class="page-title">Agent RH — Pointage & Présences</div><div class="page-breadcrumb">LNR FINANCE / Agent RH / Pointage</div></div>
+    <div class="page-actions">
+      <button class="btn btn-sm btn-secondary">📥 Importer CSV</button>
+      <button class="btn btn-sm btn-secondary">📤 Exporter</button>
+      <button class="btn btn-sm btn-primary" onclick="alert('Détection lancée !')">▶ Lancer Détection Maintenant</button>
+    </div>
+  </div>
+  <div class="stats-grid">
+    <div class="stat-card"><div class="label">Présents aujourd'hui</div><div class="value">42</div><div class="change up">95.5% taux présence</div></div>
+    <div class="stat-card"><div class="label">Retards (15–30 min)</div><div class="value">3</div><div class="change orange">Niveau 1: Notification</div></div>
+    <div class="stat-card"><div class="label">Retard grave (>30 min)</div><div class="value">1</div><div class="change down">Avertissement direct</div></div>
+    <div class="stat-card"><div class="label">Absences non justifiées</div><div class="value">2</div><div class="change down">Relance 48h en cours</div></div>
+  </div>
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab('pointage','today')">📅 Pointage du Jour</button>
+    <button class="tab-btn" onclick="switchTab('pointage','avertissements')">⚠️ Avertissements</button>
+    <button class="tab-btn" onclick="switchTab('pointage','config-pointage')">⚙️ Configuration</button>
+  </div>
+  <div class="tab-content active" id="tab-pointage-today">
+    <p style="font-size:13px;color:var(--text2);margin-bottom:12px">Pointage du Jour — 21/05/2026 | Horaire normal: 09:00 | Tolérance: 15 min</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Matricule</th><th>Nom</th><th>Heure arrivée</th><th>Retard (min)</th><th>Présent</th><th>Statut</th><th>Actions</th></tr></thead>
+        <tbody>
+          <tr><td>001</td><td><b>Dupont Jean</b></td><td>08:55</td><td style="color:var(--success)">-5</td><td>OUI</td><td><span class="badge badge-success">Ponctuel</span></td><td><button class="btn btn-sm btn-secondary">Voir</button></td></tr>
+          <tr><td>002</td><td><b>Martin Sophie</b></td><td>09:15</td><td style="color:var(--warning)">+15</td><td>OUI</td><td><span class="badge badge-warning">Retard 15 min</span></td><td><button class="btn btn-sm btn-warning">Notifier</button></td></tr>
+          <tr><td>003</td><td><b>Bernard Pierre</b></td><td>09:45</td><td style="color:var(--danger)">+45</td><td>OUI</td><td><span class="badge badge-danger">Retard grave</span></td><td><button class="btn btn-sm btn-danger">Avertir</button></td></tr>
+          <tr><td>004</td><td><b>Petit Marie</b></td><td>—</td><td>—</td><td>NON</td><td><span class="badge badge-danger">Absent</span></td><td><button class="btn btn-sm btn-warning">Justificatif</button></td></tr>
+          <tr><td>005</td><td><b>Robert Nicolas</b></td><td>08:58</td><td style="color:var(--success)">-2</td><td>OUI</td><td><span class="badge badge-success">Ponctuel</span></td><td><button class="btn btn-sm btn-secondary">Voir</button></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="tab-content" id="tab-pointage-avertissements">
+    <div class="card-title" style="margin-bottom:12px">Avertissements & Notifications</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Date</th><th>Nom</th><th>Motif</th><th>Détail</th><th>Niveau</th><th>Canaux</th><th>Statut</th></tr></thead>
+        <tbody>
+          <tr><td>21/05/2026</td><td><b>Martin Sophie</b></td><td>Retard</td><td>15 min</td><td><span class="badge badge-info">Notification (N1)</span></td><td>📱 WhatsApp + ✉️ Email</td><td><span class="badge badge-success">Envoyé</span></td></tr>
+          <tr><td>21/05/2026</td><td><b>Bernard Pierre</b></td><td>Retard grave</td><td>45 min</td><td><span class="badge badge-warning">Avertissement (N2)</span></td><td>📱 WhatsApp + ✉️ Email</td><td><span class="badge badge-success">Envoyé</span></td></tr>
+          <tr><td>20/05/2026</td><td><b>Petit Marie</b></td><td>Absence</td><td>Non justifiée</td><td><span class="badge badge-warning">Notification (N1)</span></td><td>📱 WhatsApp + ✉️ Email</td><td><span class="badge badge-success">Envoyé</span></td></tr>
+          <tr><td>15/05/2026</td><td><b>Trabelsi Karim</b></td><td>Comportement</td><td>Attitude inappropriée</td><td><span class="badge badge-warning">Avertissement (N1)</span></td><td>✉️ Email + Manager</td><td><span class="badge badge-success">Traité</span></td></tr>
+          <tr><td>12/05/2026</td><td><b>Dridi Sonia</b></td><td>Production/Qualité</td><td>Score qualité < seuil</td><td><span class="badge badge-danger">Alerte Manager (N1)</span></td><td>✉️ Email Manager</td><td><span class="badge badge-warning">En cours</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="info-box mt-16">📋 Grille des motifs d'avertissement selon le CDC</div>
+    <div class="table-wrap mt-16">
+      <table>
+        <thead><tr><th>Motif</th><th>Niveau 1</th><th>Niveau 2</th><th>Niveau 3</th></tr></thead>
+        <tbody>
+          <tr><td>Retard (&lt;30min)</td><td>Notification</td><td>Avertissement</td><td>Avertissement majeur</td></tr>
+          <tr><td>Retard (&gt;30min)</td><td>Avertissement direct</td><td>Avertissement + entretien</td><td>Sanction</td></tr>
+          <tr><td>Absence</td><td>Notification + justificatif</td><td>Avertissement</td><td>Suspension</td></tr>
+          <tr><td>Comportement</td><td>Avertissement</td><td>Entretien RH</td><td>Sanction</td></tr>
+          <tr><td>Production/Qualité</td><td>Alerte manager</td><td>Avertissement</td><td>Plan d'amélioration</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="tab-content" id="tab-pointage-config-pointage">
+    <div class="grid-2">
+      <div class="card" style="margin:0">
+        <div class="card-title">⚙️ Configuration Système 3 Niveaux</div>
+        <div class="form-group"><label>Horaire normal</label><input type="time" value="09:00"></div>
+        <div class="form-group"><label>Marge tolérance (min)</label><input type="number" value="15"></div>
+        <div class="form-group"><label>Seuil retard grave (min)</label><input type="number" value="30"></div>
+        <div class="form-group"><label>Période récidive (jours)</label><input type="number" value="30"></div>
+        <button class="btn btn-primary btn-full">💾 Sauvegarder</button>
+      </div>
+      <div class="card" style="margin:0">
+        <div class="card-title">📋 Système de Niveaux</div>
+        <div class="criteria-list">
+          <div class="criteria-item"><span>1️⃣ Premier retard (&lt; 30 min)</span><span class="pts">Notification</span></div>
+          <div class="criteria-item"><span>2️⃣ Récidive (30 jours)</span><span class="pts">Avertissement + Manager</span></div>
+          <div class="criteria-item"><span>3️⃣ Retard &gt; 30 min</span><span class="pts">Avertissement majeur + RH</span></div>
+          <div class="criteria-item"><span>📋 Comportement N1</span><span class="pts">Avertissement</span></div>
+          <div class="criteria-item"><span>📊 Production/Qualité N1</span><span class="pts">Alerte Manager</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ===== CNSS ===== -->
+<div class="section" id="sec-cnss">
+  <div class="page-header">
+    <div><div class="page-title">Agent RH — Rapport CNSS</div><div class="page-breadcrumb">LNR FINANCE / Agent RH / CNSS</div></div>
+    <div class="page-actions">
+      <button class="btn btn-sm btn-secondary" onclick="alert('Rapport CNSS généré !')">📄 Générer Rapport Mensuel</button>
+      <button class="btn btn-sm btn-secondary">📤 Exporter CSV CNSS</button>
+      <button class="btn btn-sm btn-primary" onclick="alert('Email envoyé au comptable !')">📧 Envoyer au Comptable</button>
+    </div>
+  </div>
+  <div class="stats-grid">
+    <div class="stat-card"><div class="label">Employés actifs</div><div class="value">5</div><div class="change">5 présents ce mois</div></div>
+    <div class="stat-card"><div class="label">Total salaires bruts (TND)</div><div class="value">14,200</div><div class="change">Mois de Mai 2026</div></div>
+    <div class="stat-card"><div class="label">CNSS Salariale (9.68%)</div><div class="value">1,375</div><div class="change">Calcul auto</div></div>
+    <div class="stat-card"><div class="label">CNSS Patronale (17.07%)</div><div class="value">2,244</div><div class="change">Total: 3,618 TND</div></div>
+  </div>
+  <div class="card">
+    <div class="card-title">📋 Rapport CNSS — Mai 2026 <span style="font-size:11px;color:var(--text2)">Auto-généré le 28/05 à 9h00</span></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Matricule CNSS</th><th>Nom</th><th>CIN</th><th>Salaire brut</th><th>Jours présents</th><th>Salaire proratisé</th><th>CNSS Sal. (9.68%)</th><th>CNSS Pat. (17.07%)</th><th>Total</th></tr></thead>
+        <tbody>
+          <tr><td>CNSS-001</td><td><b>Dupont Jean</b></td><td>12345678</td><td>2,500 TND</td><td>20</td><td>2,272.73</td><td>220.00</td><td>388.00</td><td><b>608.00</b></td></tr>
+          <tr><td>CNSS-002</td><td><b>Martin Sophie</b></td><td>87654321</td><td>3,200 TND</td><td>22</td><td>3,200.00</td><td>309.76</td><td>546.24</td><td><b>856.00</b></td></tr>
+          <tr><td>CNSS-003</td><td><b>Bernard Pierre</b></td><td>11223344</td><td>2,800 TND</td><td>21</td><td>2,672.73</td><td>258.72</td><td>456.24</td><td><b>714.96</b></td></tr>
+          <tr><td>CNSS-004</td><td><b>Petit Marie</b></td><td>55667788</td><td>3,500 TND</td><td>20</td><td>3,181.82</td><td>308.00</td><td>543.14</td><td><b>851.14</b></td></tr>
+          <tr><td>CNSS-005</td><td><b>Robert Nicolas</b></td><td>99001122</td><td>2,200 TND</td><td>22</td><td>2,200.00</td><td>212.96</td><td>375.54</td><td><b>588.50</b></td></tr>
+          <tr style="background:rgba(79,142,247,.08);font-weight:700"><td colspan="5">TOTAUX — 5 employés • 22 jours ouvrables</td><td>14,527.28</td><td>1,309.44</td><td>2,309.16</td><td>3,618.44</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="grid-2">
+    <div class="card" style="margin:0">
+      <div class="card-title">⚙️ Paramètres CNSS Tunisie</div>
+      <div class="form-group"><label>Plafond mensuel (TND)</label><input type="number" value="5000"></div>
+      <div class="form-group"><label>Taux salarial (%)</label><input type="number" value="9.68" step="0.01"></div>
+      <div class="form-group"><label>Taux patronal (%)</label><input type="number" value="17.07" step="0.01"></div>
+      <div class="form-group"><label>Jours ouvrables moyen</label><input type="number" value="22"></div>
+      <div class="form-group"><label>Date échéance (jour du mois)</label><input type="number" value="28"></div>
+      <button class="btn btn-primary btn-full">💾 Sauvegarder</button>
+    </div>
+    <div class="card" style="margin:0">
+      <div class="card-title">📧 Email Automatique Comptable</div>
+      <div class="info-box">Envoi automatique le 28 de chaque mois à 9h00</div>
+      <div style="background:var(--bg3);border-radius:8px;padding:14px;font-size:12px;line-height:1.6">
+        <p><b>À:</b> service.comptabilite@lnr-finance.fr</p>
+        <p><b>CC:</b> direction.rh@lnr-finance.fr</p>
+        <p><b>Objet:</b> Déclaration CNSS — Mai 2026 — LNR FINANCE</p>
+        <hr class="section-divider" style="margin:10px 0">
+        <p>Veuillez trouver ci-joint le récapitulatif CNSS de Mai 2026.</p>
+        <p style="margin-top:8px">Total salaires bruts: <b>14,200.00 TND</b></p>
+        <p>CNSS salariale (9.68%): <b>1,374.56 TND</b></p>
+        <p>CNSS patronale (17.07%): <b>2,243.88 TND</b></p>
+        <p><b>Total à déclarer: 3,618.44 TND</b></p>
+        <p style="margin-top:8px">Date d'échéance: 20 juin 2026</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== EMPLOYES ===== -->
+<div class="section" id="sec-employes">
+  <div class="page-header">
+    <div><div class="page-title">Agent RH — Gestion Employés</div><div class="page-breadcrumb">LNR FINANCE / Agent RH / Employés</div></div>
+    <div class="page-actions">
+      <button class="btn btn-sm btn-primary" onclick="openModal('modalEmploye')">➕ Nouvel Employé</button>
+      <button class="btn btn-sm btn-secondary">📤 Exporter</button>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Matricule</th><th>Nom</th><th>Poste</th><th>Email</th><th>Téléphone</th><th>Salaire</th><th>CNSS</th><th>Statut</th><th>Actions</th></tr></thead>
+      <tbody>
+        <tr><td>001</td><td><b>Dupont Jean</b></td><td>Télévendeur</td><td>jean.dupont@lnr-finance.fr</td><td>+216 12 345 678</td><td>2,500 TND</td><td>CNSS-001</td><td><span class="badge badge-success">Actif</span></td><td><button class="btn btn-sm btn-secondary">Modifier</button></td></tr>
+        <tr><td>002</td><td><b>Martin Sophie</b></td><td>Chargé RDV</td><td>sophie.martin@lnr-finance.fr</td><td>+216 98 765 432</td><td>3,200 TND</td><td>CNSS-002</td><td><span class="badge badge-success">Actif</span></td><td><button class="btn btn-sm btn-secondary">Modifier</button></td></tr>
+        <tr><td>003</td><td><b>Bernard Pierre</b></td><td>Télévendeur</td><td>pierre.bernard@lnr-finance.fr</td><td>+216 55 123 456</td><td>2,800 TND</td><td>CNSS-003</td><td><span class="badge badge-success">Actif</span></td><td><button class="btn btn-sm btn-secondary">Modifier</button></td></tr>
+        <tr><td>004</td><td><b>Petit Marie</b></td><td>Commercial</td><td>marie.petit@lnr-finance.fr</td><td>+216 22 987 654</td><td>3,500 TND</td><td>CNSS-004</td><td><span class="badge badge-success">Actif</span></td><td><button class="btn btn-sm btn-secondary">Modifier</button></td></tr>
+        <tr><td>005</td><td><b>Robert Nicolas</b></td><td>Commercial</td><td>nicolas.robert@lnr-finance.fr</td><td>+216 44 555 666</td><td>2,200 TND</td><td>CNSS-005</td><td><span class="badge badge-success">Actif</span></td><td><button class="btn btn-sm btn-secondary">Modifier</button></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+
+<!-- ===== LEADS ===== -->
+<div class="section" id="sec-leads">
+  <div class="page-header">
+    <div><div class="page-title">Agent Commercial — Leads & Qualification</div><div class="page-breadcrumb">LNR FINANCE / Agent Commercial / Leads</div></div>
+    <div class="page-actions">
+      <button class="btn btn-sm btn-secondary">📥 Importer CSV</button>
+      <button class="btn btn-sm btn-primary" onclick="openModal('modalLead')">➕ Nouveau Lead</button>
+      <button class="btn btn-sm btn-secondary" onclick="alert('Qualification IA lancée sur tous les nouveaux leads !')">🤖 Qualifier par IA</button>
+      <button class="btn btn-sm btn-secondary">📤 Exporter</button>
+    </div>
+  </div>
+  <div class="stats-grid">
+    <div class="stat-card"><div class="label">Total leads base</div><div class="value">1,247</div><div class="change up">+156 ce mois</div></div>
+    <div class="stat-card"><div class="label">Leads qualifiés</div><div class="value">892</div><div class="change up">71.5% taux qualif</div></div>
+    <div class="stat-card"><div class="label">Leads attribués (actifs)</div><div class="value">24</div><div class="change">Distribution Poker</div></div>
+    <div class="stat-card"><div class="label">Contrats signés (mois)</div><div class="value">86</div><div class="change up">9.6% conversion</div></div>
+  </div>
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab('leads','table-leads')">📋 Base de Leads</button>
+    <button class="tab-btn" onclick="switchTab('leads','ia-leads')">🤖 Qualification IA</button>
+    <button class="tab-btn" onclick="switchTab('leads','config-leads')">⚙️ Config Agent</button>
+  </div>
+  <div class="tab-content active" id="tab-leads-table-leads">
+    <div id="leads-filter-banner" class="filter-banner">🔒 Vue filtrée — Vous ne voyez que vos leads assignés</div>
+    <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+      <select class="form-group" style="margin:0;width:auto"><option>Tous les leads</option><option>Nouveaux</option><option>Qualifiés</option><option>Attribués</option><option>NRP (48h)</option><option>Signés</option></select>
+      <select class="form-group" style="margin:0;width:auto"><option>Tous scores</option><option>Priorité haute (80-100)</option><option>Priorité moyenne (50-79)</option><option>Priorité basse (20-49)</option></select>
+      <select class="form-group" style="margin:0;width:auto"><option>Toutes zones</option><option>Tunis Centre (1002)</option><option>La Marsa (1003)</option><option>Sidi Bou Said (1053)</option></select>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>ID</th><th>Nom</th><th>Téléphone</th><th>Âge</th><th>CP</th><th>Mutuelle actuelle</th><th>Score IA</th><th>Type Lead</th><th>Commercial</th><th>Statut</th><th>Actions</th></tr></thead>
+        <tbody>
+          <tr data-owner="Robert Nicolas"><td>LEAD-001</td><td><b>Marie Dubois</b></td><td>+216 99 888 777</td><td>62</td><td>1002</td><td>CNSS</td><td><span style="color:var(--success);font-weight:700">85</span>/100</td><td><span class="badge badge-purple">SENIOR_SEUL</span></td><td>Robert Nicolas</td><td><span class="badge badge-success">Signé</span></td><td><button class="btn btn-sm btn-secondary">Voir</button></td></tr>
+          <tr data-owner="Dupont Jean"><td>LEAD-002</td><td><b>Jean-Pierre Martin</b></td><td>+216 55 444 333</td><td>58</td><td>1003</td><td>AMC</td><td><span style="color:var(--success);font-weight:700">92</span>/100</td><td><span class="badge badge-purple">PRE_RETRAITE</span></td><td>Dupont Jean</td><td><span class="badge badge-info">RDV pris</span></td><td><button class="btn btn-sm btn-secondary">Voir</button></td></tr>
+          <tr data-owner="Martin Sophie"><td>LEAD-003</td><td><b>Fatima Ben Salah</b></td><td>+216 22 111 000</td><td>45</td><td>1053</td><td>Star Assurances</td><td><span style="color:var(--warning);font-weight:700">65</span>/100</td><td><span class="badge badge-gray">AUTRE</span></td><td>Martin Sophie</td><td><span class="badge badge-warning">Devis envoyé</span></td><td><button class="btn btn-sm btn-secondary">Voir</button></td></tr>
+          <tr data-owner="__unassigned__"><td>LEAD-004</td><td><b>Karim Hadj</b></td><td>+216 77 666 555</td><td>35</td><td>1002</td><td>GAT Assurances</td><td><span style="color:var(--danger);font-weight:700">35</span>/100</td><td><span class="badge badge-gray">AUTRE</span></td><td>—</td><td><span class="badge badge-gray">À qualifier</span></td><td><button class="btn btn-sm btn-primary">Qualifier IA</button></td></tr>
+          <tr data-owner="Bernard Pierre"><td>LEAD-005</td><td><b>Amina Dridi</b></td><td>+216 44 333 222</td><td>71</td><td>1003</td><td>CNSS</td><td><span style="color:var(--success);font-weight:700">95</span>/100</td><td><span class="badge badge-purple">SENIOR_COUPLE</span></td><td>Bernard Pierre</td><td><span class="badge badge-warning">NRP (J+1)</span></td><td><button class="btn btn-sm btn-secondary">Réintégrer</button></td></tr>
+          <tr data-owner="Petit Marie"><td>LEAD-006</td><td><b>Hassan Mejri</b></td><td>+216 33 777 888</td><td>67</td><td>1002</td><td>CNSS</td><td><span style="color:var(--success);font-weight:700">88</span>/100</td><td><span class="badge badge-purple">RETRAITE_FAMILLE</span></td><td>Petit Marie</td><td><span class="badge badge-danger">Pas intéressé</span></td><td><button class="btn btn-sm btn-secondary">Archiver</button></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="tab-content" id="tab-leads-ia-leads">
+    <div class="grid-2">
+      <div class="card" style="margin:0">
+        <div style="text-align:center;padding:12px">
+          <div class="score-num green" style="font-size:56px">92</div>
+          <div style="font-size:16px;font-weight:600;margin-top:8px">Jean-Pierre Martin</div>
+          <div style="font-size:12px;color:var(--text2)">58 ans • La Marsa (1003) • AMC actuelle</div>
+        </div>
+        <div class="criteria-list">
+          <div class="criteria-item"><span>Âge / Priorité Senior (58 ans — 55–65 ans)</span><span class="pts">+20 pts</span></div>
+          <div class="criteria-item"><span>Zone géographique cible</span><span class="pts">+15 pts</span></div>
+          <div class="criteria-item"><span>Mutuelle actuelle (Concurrent direct)</span><span class="pts">+20 pts</span></div>
+          <div class="criteria-item"><span>Potentiel estimé (Très élevé)</span><span class="pts">+32 pts</span></div>
+          <div class="criteria-item"><span>Situation familiale</span><span class="pts">+5 pts</span></div>
+        </div>
+      </div>
+      <div class="card" style="margin:0">
+        <div class="card-title">🎯 Grille de scoring seniors</div>
+        <div class="warning-box">⚠️ Barème corrigé (CDC v2.1) — 3 plages d'âge distinctes</div>
+        <div class="criteria-list">
+          <div class="criteria-item"><span>Âge 55–65 ans</span><span class="pts">+20 pts</span></div>
+          <div class="criteria-item"><span>Âge 66–75 ans</span><span class="pts">+30 pts</span></div>
+          <div class="criteria-item"><span>Âge 75+ ans</span><span class="pts">+25 pts</span></div>
+          <div class="criteria-item"><span>Situation familiale (couple)</span><span class="pts">+15 pts</span></div>
+          <div class="criteria-item"><span>Situation familiale (seul)</span><span class="pts">+10 pts</span></div>
+          <div class="criteria-item"><span>Mutuelle concurrente directe</span><span class="pts">+15 pts</span></div>
+          <div class="criteria-item"><span>Autre mutuelle</span><span class="pts">+5 pts</span></div>
+          <div class="criteria-item"><span>Zone géographique cible</span><span class="pts">+10 pts</span></div>
+          <div class="criteria-item"><span>Réponses questions découverte</span><span class="pts">+10 pts</span></div>
+        </div>
+        <div style="margin-top:12px;padding:10px;background:var(--bg3);border-radius:8px;font-size:12px">
+          <p><b style="color:var(--success)">Score &gt; 70</b> → PRIORITAIRE → Campagne principale</p>
+          <p><b style="color:var(--warning)">Score 50–70</b> → MOYEN → Campagne secondaire</p>
+          <p><b style="color:var(--danger)">Score &lt; 50</b> → FAIBLE → Enrichir avant campagne</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="tab-content" id="tab-leads-config-leads">
+    <div class="grid-2">
+      <div class="card" style="margin:0">
+        <div class="card-title">⚙️ Config Agent Qualification</div>
+        <div class="form-group"><label>Seuil priorité haute</label><input type="number" value="70"></div>
+        <div class="form-group"><label>Seuil priorité moyenne</label><input type="number" value="50"></div>
+        <div class="form-group"><label>Quota leads/jour/commercial</label><input type="number" value="20"></div>
+        <div class="form-group"><label>Délai réintégration NRP (h)</label><input type="number" value="48"></div>
+        <button class="btn btn-primary btn-full">💾 Sauvegarder</button>
+      </div>
+      <div class="card" style="margin:0">
+        <div class="card-title">📋 Statuts des leads</div>
+        <div class="criteria-list">
+          <div class="criteria-item"><span>🔄 NRP (Non Répondu)</span><span class="pts">Réintégration 48h</span></div>
+          <div class="criteria-item"><span>❌ Refus catégorique</span><span class="pts">Suppression définitive</span></div>
+          <div class="criteria-item"><span>🚫 Hors cible</span><span class="pts">Suppression définitive</span></div>
+          <div class="criteria-item"><span>👎 Pas intéressé</span><span class="pts">Suppression définitive</span></div>
+          <div class="criteria-item"><span>📨 Devis envoyé</span><span class="pts">Suivi commercial</span></div>
+          <div class="criteria-item"><span>📅 RDV pris</span><span class="pts">Attribué commercial</span></div>
+          <div class="criteria-item"><span>✅ Signé</span><span class="pts">Bascule Agent Assurance</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ===== POKER ===== -->
+<div class="section" id="sec-poker">
+  <div class="page-header">
+    <div><div class="page-title">Agent Commercial — Distribution Poker</div><div class="page-breadcrumb">LNR FINANCE / Agent Commercial / Poker</div></div>
+    <div class="page-actions">
+      <button class="btn btn-sm btn-primary" onclick="alert('Distribution lancée !')">▶ Lancer Distribution</button>
+      <button class="btn btn-sm btn-secondary">🔄 Réinitialiser</button>
+      <button class="btn btn-sm btn-secondary">📊 Statistiques</button>
+    </div>
+  </div>
+  <div class="stats-grid">
+    <div class="stat-card"><div class="label">Commerciaux actifs</div><div class="value">6</div><div class="change">Rotation Poker active</div></div>
+    <div class="stat-card"><div class="label">Leads/commercial (moyenne)</div><div class="value">4.2</div><div class="change up">Équilibrage optimal</div></div>
+    <div class="stat-card"><div class="label">Leads en attente</div><div class="value">12</div><div class="change">Distribution en cours</div></div>
+    <div class="stat-card"><div class="label">Prochain attribué</div><div class="value" style="font-size:16px">Robert N.</div><div class="change up">Moins chargé (2 leads)</div></div>
+  </div>
+  <div class="card">
+    <div class="card-title">🃏 Distribution Poker — Commerciaux <span style="font-size:11px;color:var(--text2)">Ordre par leads actifs ↑</span></div>
+    <div class="poker-list">
+      <div class="poker-item"><div class="poker-rank">1</div><div class="poker-info"><div class="name">Robert Nicolas</div><div class="meta">Tél: +216 25 555 555 • 0 RDV aujourd'hui</div></div><div class="poker-leads"><div class="num">2</div><div class="label">Leads</div></div><span class="poker-next-badge">✅ SUIVANT</span></div>
+      <div class="poker-item"><div class="poker-rank">2</div><div class="poker-info"><div class="name">Bernard Pierre</div><div class="meta">Tél: +216 23 333 333 • 1 RDV aujourd'hui</div></div><div class="poker-leads"><div class="num">3</div><div class="label">Leads</div></div></div>
+      <div class="poker-item"><div class="poker-rank">3</div><div class="poker-info"><div class="name">Dupont Jean</div><div class="meta">Tél: +216 21 111 111 • 2 RDV aujourd'hui</div></div><div class="poker-leads"><div class="num">5</div><div class="label">Leads</div></div></div>
+      <div class="poker-item"><div class="poker-rank">4</div><div class="poker-info"><div class="name">Martin Sophie</div><div class="meta">Tél: +216 22 222 222 • 3 RDV aujourd'hui</div></div><div class="poker-leads"><div class="num">8</div><div class="label">Leads</div></div></div>
+      <div class="poker-item"><div class="poker-rank">5</div><div class="poker-info"><div class="name">Petit Marie</div><div class="meta">Tél: +216 24 444 444 • 4 RDV aujourd'hui</div></div><div class="poker-leads"><div class="num">12</div><div class="label">Leads</div></div><span class="poker-quota-badge">⚠️ QUOTA 60%</span></div>
+      <div class="poker-item"><div class="poker-rank">6</div><div class="poker-info"><div class="name">Richard Isabelle</div><div class="meta">Tél: +216 26 666 666 • 2 RDV aujourd'hui</div></div><div class="poker-leads"><div class="num">7</div><div class="label">Leads</div></div></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">📋 Règles de l'algorithme Poker</div>
+    <div class="grid-2">
+      <div>
+        <div class="criteria-list">
+          <div class="criteria-item"><span>🧮 Algorithme</span><span class="pts" style="font-size:11px">Moins de leads actifs = prochain</span></div>
+          <div class="criteria-item"><span>📊 Quota journalier</span><span class="pts">Max 20 leads/jour</span></div>
+          <div class="criteria-item"><span>🔄 Réintégration NRP</span><span class="pts">Autre commercial après 48h</span></div>
+          <div class="criteria-item"><span>🔒 Exclusivité</span><span class="pts">Devis/RDV/Signé = même commercial</span></div>
+        </div>
+      </div>
+      <div style="background:var(--bg3);border-radius:8px;padding:14px">
+        <p style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--accent)">Code algorithme (JavaScript)</p>
+        <code style="font-size:11px;color:var(--text2);white-space:pre-wrap">const disponible = commerciaux
+  .filter(c => c.rdv_jour &lt; c.quota_jour);
+disponible.sort((a,b) => 
+  a.leads_actifs - b.leads_actifs);
+return disponible[0]; // Moins chargé</code>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== RDV ===== -->
+<div class="section" id="sec-rdv">
+  <div class="page-header">
+    <div><div class="page-title">Agent Commercial — Prise de RDV</div><div class="page-breadcrumb">LNR FINANCE / Agent Commercial / RDV</div></div>
+    <div class="page-actions">
+      <button class="btn btn-sm btn-primary" onclick="openModal('modalRDV')">➕ Nouveau RDV</button>
+      <button class="btn btn-sm btn-secondary">📅 Vue Calendrier</button>
+      <button class="btn btn-sm btn-secondary">📤 Exporter</button>
+    </div>
+  </div>
+  <div class="stats-grid">
+    <div class="stat-card"><div class="label">RDV cette semaine</div><div class="value">18</div><div class="change up">+3 vs semaine dernière</div></div>
+    <div class="stat-card"><div class="label">RDV honorés</div><div class="value">12</div><div class="change up">66.7% taux présence</div></div>
+    <div class="stat-card"><div class="label">RDV annulés/no-show</div><div class="value">4</div><div class="change down">22.2% taux absence</div></div>
+    <div class="stat-card"><div class="label">Signatures post-RDV</div><div class="value">7</div><div class="change up">58.3% conversion</div></div>
+  </div>
+  <div id="rdv-filter-banner" class="filter-banner">🔒 Vue filtrée — Vous ne voyez que vos RDV assignés</div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Date</th><th>Heure</th><th>Client</th><th>Téléphone</th><th>Commercial</th><th>Type</th><th>Cal.com</th><th>Statut</th><th>Actions</th></tr></thead>
+      <tbody>
+        <tr data-owner="Robert Nicolas"><td>21/05/2026</td><td>10:00</td><td><b>Marie Dubois</b></td><td>+216 99 888 777</td><td>Robert Nicolas</td><td>Présentiel</td><td><a href="#" style="color:var(--accent);font-size:12px">🔗 Lien</a></td><td><span class="badge badge-success">Honoré</span></td><td><button class="btn btn-sm btn-secondary">Voir</button></td></tr>
+        <tr data-owner="Dupont Jean"><td>21/05/2026</td><td>14:30</td><td><b>Jean-Pierre Martin</b></td><td>+216 55 444 333</td><td>Dupont Jean</td><td>Visio</td><td><a href="#" style="color:var(--accent);font-size:12px">🔗 Lien</a></td><td><span class="badge badge-info">Prévu</span></td><td><button class="btn btn-sm btn-secondary">Voir</button></td></tr>
+        <tr data-owner="Bernard Pierre"><td>21/05/2026</td><td>16:00</td><td><b>Amina Dridi</b></td><td>+216 44 333 222</td><td>Bernard Pierre</td><td>Présentiel</td><td><a href="#" style="color:var(--accent);font-size:12px">🔗 Lien</a></td><td><span class="badge badge-danger">No-show</span></td><td><button class="btn btn-sm btn-warning">NRP</button></td></tr>
+        <tr data-owner="Martin Sophie"><td>22/05/2026</td><td>09:00</td><td><b>Fatima Ben Salah</b></td><td>+216 22 111 000</td><td>Martin Sophie</td><td>Présentiel</td><td><a href="#" style="color:var(--accent);font-size:12px">🔗 Lien</a></td><td><span class="badge badge-info">Prévu</span></td><td><button class="btn btn-sm btn-secondary">Voir</button></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="card mt-16">
+    <div class="card-title">⚙️ Intégration Cal.com</div>
+    <div class="info-box">Configuration des liens de prise de RDV par commercial</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Commercial</th><th>Lien Cal.com</th><th>Quota jour</th><th>Statut</th><th>Actions</th></tr></thead>
+        <tbody>
+          <tr><td>Robert Nicolas</td><td><input style="background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:4px 8px;color:var(--text);font-size:12px;width:220px" placeholder="https://cal.com/robert-nicolas" value=""></td><td><input type="number" value="5" style="background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:4px 8px;color:var(--text);font-size:12px;width:60px"></td><td><span class="badge badge-warning">⬜ À configurer</span></td><td><button class="btn btn-sm btn-primary">Sauvegarder</button></td></tr>
+          <tr><td>Dupont Jean</td><td><input style="background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:4px 8px;color:var(--text);font-size:12px;width:220px" placeholder="https://cal.com/jean-dupont" value=""></td><td><input type="number" value="5" style="background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:4px 8px;color:var(--text);font-size:12px;width:60px"></td><td><span class="badge badge-warning">⬜ À configurer</span></td><td><button class="btn btn-sm btn-primary">Sauvegarder</button></td></tr>
+          <tr><td>Bernard Pierre</td><td><input style="background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:4px 8px;color:var(--text);font-size:12px;width:220px" placeholder="https://cal.com/pierre-bernard" value=""></td><td><input type="number" value="5" style="background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:4px 8px;color:var(--text);font-size:12px;width:60px"></td><td><span class="badge badge-warning">⬜ À configurer</span></td><td><button class="btn btn-sm btn-primary">Sauvegarder</button></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="form-group mt-16"><label>Confirmation automatique (Email + SMS)</label><select><option>Email + SMS activés</option><option>Email uniquement</option><option>SMS uniquement</option><option>Désactivé</option></select></div>
+  </div>
+</div>
+
+
+<!-- ===== CAMPAGNES INSTANTLY ===== -->
+<div class="section" id="sec-campagnes">
+  <div class="page-header">
+    <div><div class="page-title">Campagnes Email — Instantly</div><div class="page-breadcrumb">LNR FINANCE / Agent Commercial / Campagnes</div></div>
+    <div class="page-actions">
+      <button class="btn btn-sm btn-primary" onclick="openModal('modalCampagne')">➕ Nouvelle Campagne</button>
+      <button class="btn btn-sm btn-secondary" onclick="openModal('modalTemplate')">📝 Gérer Templates</button>
+      <button class="btn btn-sm btn-secondary">📤 Exporter Stats</button>
+    </div>
+  </div>
+  <div class="stats-grid">
+    <div class="stat-card"><div class="label">Emails envoyés (7 jours)</div><div class="value">1,284</div><div class="change up">+312 vs semaine dernière</div></div>
+    <div class="stat-card"><div class="label">Taux d'ouverture moyen</div><div class="value">38.4%</div><div class="change up">+2.1% vs objectif 40%</div></div>
+    <div class="stat-card"><div class="label">Taux de réponse</div><div class="value">11.2%</div><div class="change up">Objectif: 10% ✅</div></div>
+    <div class="stat-card"><div class="label">Conversion RDV</div><div class="value">32.8%</div><div class="change up">Objectif: 30% ✅</div></div>
+  </div>
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab('campagnes','camp-actives')">📧 Campagnes Actives</button>
+    <button class="tab-btn" onclick="switchTab('campagnes','camp-templates')">📝 Templates J1/J3/J7/J15</button>
+    <button class="tab-btn" onclick="switchTab('campagnes','camp-tracking')">📊 Tracking & Performances</button>
+    <button class="tab-btn" onclick="switchTab('campagnes','camp-antispam')">🛡️ Anti-Spam</button>
+  </div>
+
+  <div class="tab-content active" id="tab-campagnes-camp-actives">
+    <div class="campaign-card">
+      <div class="campaign-header">
+        <div>
+          <span class="campaign-day">J1 — Découverte</span>
+          <span style="font-size:13px;font-weight:600;margin-left:10px">Campagne Mutuelle Seniors Mai 2026</span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span class="badge badge-success">Active</span>
+          <button class="btn btn-sm btn-secondary">⏸ Pause</button>
+          <button class="btn btn-sm btn-secondary">📊 Stats</button>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--text2)">Envoyé: 312 emails • Leads cible: Score &gt;70 • Commercial: Rotation automatique</div>
+      <div class="campaign-stats">
+        <div class="camp-stat"><div class="v" style="color:var(--text)">312</div><div class="l">Envoyés</div></div>
+        <div class="camp-stat"><div class="v" style="color:var(--success)">42.3%</div><div class="l">Ouvertures</div></div>
+        <div class="camp-stat"><div class="v" style="color:var(--accent)">13.8%</div><div class="l">Réponses</div></div>
+        <div class="camp-stat"><div class="v" style="color:var(--warning)">28.6%</div><div class="l">→ RDV</div></div>
+      </div>
+    </div>
+    <div class="campaign-card">
+      <div class="campaign-header">
+        <div>
+          <span class="campaign-day" style="background:rgba(245,158,11,.15);color:var(--warning)">J3 — Relance</span>
+          <span style="font-size:13px;font-weight:600;margin-left:10px">Séquence Relance Témoignage</span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span class="badge badge-success">Active</span>
+          <button class="btn btn-sm btn-secondary">⏸ Pause</button>
+          <button class="btn btn-sm btn-secondary">📊 Stats</button>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--text2)">Envoyé: 189 emails • Leads: N'ont pas répondu à J1</div>
+      <div class="campaign-stats">
+        <div class="camp-stat"><div class="v" style="color:var(--text)">189</div><div class="l">Envoyés</div></div>
+        <div class="camp-stat"><div class="v" style="color:var(--warning)">34.1%</div><div class="l">Ouvertures</div></div>
+        <div class="camp-stat"><div class="v" style="color:var(--accent)">9.5%</div><div class="l">Réponses</div></div>
+        <div class="camp-stat"><div class="v" style="color:var(--warning)">21.1%</div><div class="l">→ RDV</div></div>
+      </div>
+    </div>
+    <div class="campaign-card">
+      <div class="campaign-header">
+        <div>
+          <span class="campaign-day" style="background:rgba(239,68,68,.15);color:var(--danger)">J7 — Urgence</span>
+          <span style="font-size:13px;font-weight:600;margin-left:10px">Offre Limitée dans le Temps</span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span class="badge badge-warning">⚠️ Taux faible</span>
+          <button class="btn btn-sm btn-secondary">✏️ Modifier</button>
+          <button class="btn btn-sm btn-secondary">📊 Stats</button>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--text2)">Envoyé: 143 emails • Alerte: Taux ouverture 28% (seuil 30%)</div>
+      <div class="campaign-stats">
+        <div class="camp-stat"><div class="v" style="color:var(--text)">143</div><div class="l">Envoyés</div></div>
+        <div class="camp-stat"><div class="v" style="color:var(--danger)">28.0%</div><div class="l">Ouvertures</div></div>
+        <div class="camp-stat"><div class="v" style="color:var(--accent)">7.7%</div><div class="l">Réponses</div></div>
+        <div class="camp-stat"><div class="v" style="color:var(--danger)">18.2%</div><div class="l">→ RDV</div></div>
+      </div>
+    </div>
+    <div class="campaign-card">
+      <div class="campaign-header">
+        <div>
+          <span class="campaign-day" style="background:rgba(124,92,191,.15);color:#a78bfa">J15 — Rupture de glace</span>
+          <span style="font-size:13px;font-weight:600;margin-left:10px">Message Personnalisé Final</span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span class="badge badge-gray">Programmée</span>
+          <button class="btn btn-sm btn-secondary">▶ Démarrer</button>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--text2)">En attente • 87 leads ciblés • Prochain envoi: 25/05/2026</div>
+      <div class="campaign-stats">
+        <div class="camp-stat"><div class="v" style="color:var(--text2)">87</div><div class="l">En attente</div></div>
+        <div class="camp-stat"><div class="v" style="color:var(--text2)">—</div><div class="l">Ouvertures</div></div>
+        <div class="camp-stat"><div class="v" style="color:var(--text2)">—</div><div class="l">Réponses</div></div>
+        <div class="camp-stat"><div class="v" style="color:var(--text2)">—</div><div class="l">→ RDV</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-content" id="tab-campagnes-camp-templates">
+    <div class="info-box">Les templates sont personnalisés avec: Prénom, Âge, Code postal, Commercial assigné, Lien RDV unique Cal.com</div>
+    <div class="card">
+      <div class="card-title">📧 Template J1 — Découverte</div>
+      <div class="form-group"><label>Objet</label><input value="{{Prénom}}, comparez votre mutuelle santé en 2 minutes"></div>
+      <div class="form-group"><label>Corps de l'email</label><textarea style="min-height:120px">Bonjour {{Prénom}},
+
+Je me permets de vous contacter car, en tant que senior résidant {{Code_Postal}}, vous bénéficiez de conditions exceptionnelles sur nos mutuelles santé.
+
+En quelques clics, notre comparateur vous permet d'économiser jusqu'à 30% sur votre couverture actuelle.
+
+Pour en savoir plus, je vous invite à prendre un rendez-vous avec {{Commercial_Prénom}} :
+👉 {{Lien_RDV_Cal}}
+
+Bien cordialement,
+{{Commercial_Prénom}} - LNR FINANCE
+ORIAS n°24000175</textarea></div>
+      <button class="btn btn-secondary btn-sm">💾 Sauvegarder Template</button>
+    </div>
+    <div class="card">
+      <div class="card-title">📧 Template J3 — Relance Témoignage</div>
+      <div class="form-group"><label>Objet</label><input value="{{Prénom}}, voici ce que dit Marie D., 64 ans de Tunis..."></div>
+      <div class="form-group"><label>Corps de l'email</label><textarea style="min-height:100px">Bonjour {{Prénom}},
+
+Suite à mon message de l'autre jour, je souhaitais vous partager le témoignage de Marie D., 64 ans:
+"Grâce à LNR Finance, j'économise 45 TND/mois avec une meilleure couverture."
+
+{{Commercial_Prénom}} reste disponible pour vous: {{Lien_RDV_Cal}}
+
+Cordialement,
+LNR FINANCE</textarea></div>
+      <button class="btn btn-secondary btn-sm">💾 Sauvegarder Template</button>
+    </div>
+    <div class="card">
+      <div class="card-title">📧 Template J7 — Urgence (Offre limitée)</div>
+      <div class="form-group"><label>Objet</label><input value="⏰ Derniers jours — Offre mutuelle senior pour les {{Code_Postal}}"></div>
+      <div class="form-group"><label>Corps de l'email</label><textarea style="min-height:100px">Bonjour {{Prénom}},
+
+Notre offre spéciale seniors {{Code_Postal}} se termine dans 48h.
+Profitez de votre tarif privilégié avant le [DATE].
+
+Réservez votre créneaux maintenant: {{Lien_RDV_Cal}}
+
+LNR FINANCE — {{Commercial_Prénom}}</textarea></div>
+      <button class="btn btn-secondary btn-sm">💾 Sauvegarder Template</button>
+    </div>
+    <div class="card">
+      <div class="card-title">📧 Template J15 — Rupture de glace</div>
+      <div class="form-group"><label>Objet</label><input value="{{Prénom}}, je voulais juste m'assurer..."></div>
+      <div class="form-group"><label>Corps de l'email</label><textarea style="min-height:100px">Bonjour {{Prénom}},
+
+Je ne voudrais pas vous déranger davantage, mais je tenais à m'assurer que vous avez bien reçu mes précédents messages.
+
+Si vous souhaitez comparer vos options de mutuelle santé, {{Commercial_Prénom}} est à votre disposition: {{Lien_RDV_Cal}}
+
+Si vous ne souhaitez plus recevoir nos emails, cliquez ici pour vous désabonner.
+
+LNR FINANCE</textarea></div>
+      <button class="btn btn-secondary btn-sm">💾 Sauvegarder Template</button>
+    </div>
+  </div>
+
+  <div class="tab-content" id="tab-campagnes-camp-tracking">
+    <div class="chart-grid">
+      <div class="chart-card"><h3>📈 Ouvertures par campagne (7 jours)</h3><div class="chart-wrap"><canvas id="chartCampagnes"></canvas></div></div>
+      <div class="chart-card"><h3>📊 Funnel de conversion</h3><div class="chart-wrap"><canvas id="chartFunnel"></canvas></div></div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Campagne</th><th>Envoyés</th><th>Ouvertures</th><th>Taux ouv.</th><th>Clics</th><th>Réponses</th><th>RDV pris</th><th>Conversions</th><th>Statut</th></tr></thead>
+        <tbody>
+          <tr><td><span class="badge badge-info">J1</span></td><td>312</td><td>132</td><td style="color:var(--success)">42.3%</td><td>48</td><td>43</td><td>23</td><td>12</td><td><span class="badge badge-success">✅ Objectif atteint</span></td></tr>
+          <tr><td><span class="badge badge-warning">J3</span></td><td>189</td><td>64</td><td style="color:var(--warning)">34.1%</td><td>22</td><td>18</td><td>8</td><td>4</td><td><span class="badge badge-success">✅ OK</span></td></tr>
+          <tr><td><span class="badge badge-danger">J7</span></td><td>143</td><td>40</td><td style="color:var(--danger)">28.0%</td><td>12</td><td>11</td><td>5</td><td>2</td><td><span class="badge badge-danger">⚠️ Sous seuil</span></td></tr>
+          <tr><td><span class="badge badge-purple">J15</span></td><td>87</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td><span class="badge badge-gray">Programmée</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="info-box mt-16">📡 Tracking automatique via webhook n8n → Supabase | Synchronisation toutes les 15 minutes</div>
+  </div>
+
+  <div class="tab-content" id="tab-campagnes-camp-antispam">
+    <div class="grid-2">
+      <div class="card" style="margin:0">
+        <div class="card-title">🛡️ Configuration Anti-Spam</div>
+        <div class="criteria-list">
+          <div class="criteria-item"><span>Email warming (2 semaines avant)</span><span class="pts badge badge-success">✅ Configuré</span></div>
+          <div class="criteria-item"><span>Rythme: 10→15→20 emails/jour/compte</span><span class="pts badge badge-success">✅ Actif</span></div>
+          <div class="criteria-item"><span>Domaines dédiés (3-6 comptes)</span><span class="pts badge badge-warning">⬜ À créer</span></div>
+          <div class="criteria-item"><span>DKIM/SPF/DMARC configurés</span><span class="pts badge badge-warning">⬜ À créer</span></div>
+          <div class="criteria-item"><span>Vérification spam words</span><span class="pts badge badge-success">✅ Actif</span></div>
+        </div>
+      </div>
+      <div class="card" style="margin:0">
+        <div class="card-title">⚙️ Configuration DNS à créer</div>
+        <div style="font-size:12px;background:var(--bg3);border-radius:8px;padding:12px;font-family:monospace;line-height:1.8">
+          <p style="color:var(--text2)"># DMARC</p>
+          <p>TXT _dmarc.lnr-finance.fr</p>
+          <p style="color:var(--warning)">v=DMARC1; p=reject; rua=mailto:dmarc@lnr-finance.fr</p>
+          <br>
+          <p style="color:var(--text2)"># SPF</p>
+          <p>TXT lnr-finance.fr</p>
+          <p style="color:var(--warning)">v=SPF1 include:spf.instantly.ai ~all</p>
+          <br>
+          <p style="color:var(--text2)"># DKIM</p>
+          <p>TXT selector1._domainkey.lnr-finance.fr</p>
+          <p style="color:var(--warning)">(Clé DKIM Instantly — à générer)</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ===== CONTRATS ===== -->
+<div class="section" id="sec-contrats">
+  <div class="page-header">
+    <div><div class="page-title">Agent Assurance — Dossiers Contrats</div><div class="page-breadcrumb">LNR FINANCE / Agent Assurance / Contrats</div></div>
+    <div class="page-actions">
+      <button class="btn btn-sm btn-primary" onclick="openModal('modalContrat')">➕ Nouveau Dossier</button>
+      <button class="btn btn-sm btn-secondary" onclick="switchTab('contrats','incomplets')">⚠️ Dossiers Incomplets</button>
+      <button class="btn btn-sm btn-secondary">📤 Exporter</button>
+    </div>
+  </div>
+  <div class="stats-grid">
+    <div class="stat-card"><div class="label">Dossiers totaux</div><div class="value">156</div><div class="change up">+12 ce mois</div></div>
+    <div class="stat-card"><div class="label">Complètement validés</div><div class="value">98</div><div class="change up">62.8% validés</div></div>
+    <div class="stat-card"><div class="label">En attente documents</div><div class="value">12</div><div class="change down">Relances actives</div></div>
+    <div class="stat-card"><div class="label">Contrats actifs</div><div class="value">86</div><div class="change up">55.1% activation</div></div>
+  </div>
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab('contrats','liste-contrats')">📋 Tous les dossiers</button>
+    <button class="tab-btn" onclick="switchTab('contrats','incomplets')">⚠️ Incomplets (12)</button>
+  </div>
+  <div class="tab-content active" id="tab-contrats-liste-contrats">
+    <div id="contrats-filter-banner" class="filter-banner">🔒 Vue filtrée — Vous ne voyez que vos dossiers saisis</div>
+    <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+      <select class="form-group" style="margin:0;width:auto"><option>Toutes compagnies</option><option>Neoliane</option><option>Alptis</option><option>SPVIE</option></select>
+      <select class="form-group" style="margin:0;width:auto"><option>Tous statuts</option><option>Complet</option><option>Partiel</option><option>Incomplet</option><option>Validé Gestion</option><option>Validé Manager</option></select>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>ID</th><th>Souscripteur</th><th>Téléphone</th><th>Compagnie</th><th>Montant/mois</th><th>CIN</th><th>Vitale</th><th>RIB</th><th>Statut</th><th>Actions</th></tr></thead>
+        <tbody>
+          <tr data-owner="Dupont Jean"><td>CTR-001</td><td><b>Marie Dubois</b></td><td>+216 99 888 777</td><td>Neoliane</td><td>145 TND</td><td><span style="color:var(--success)">✅</span></td><td><span style="color:var(--success)">✅</span></td><td><span style="color:var(--success)">✅</span></td><td><span class="badge badge-success">Actif</span></td><td><button class="btn btn-sm btn-secondary">Voir</button></td></tr>
+          <tr data-owner="Bernard Pierre"><td>CTR-002</td><td><b>Ahmed Ben Salah</b></td><td>+216 33 444 555</td><td>Alptis</td><td>98 TND</td><td><span style="color:var(--success)">✅</span></td><td><span style="color:var(--danger)">❌</span></td><td><span style="color:var(--success)">✅</span></td><td><span class="badge badge-warning">Partiel</span></td><td><button class="btn btn-sm btn-warning">Relancer</button></td></tr>
+          <tr data-owner="Bernard Pierre"><td>CTR-003</td><td><b>Sophie Leroy</b></td><td>+216 33 222 111</td><td>SPVIE</td><td>210 TND</td><td><span style="color:var(--danger)">❌</span></td><td><span style="color:var(--success)">✅</span></td><td><span style="color:var(--danger)">❌</span></td><td><span class="badge badge-danger">Incomplet</span></td><td><button class="btn btn-sm btn-danger">Relancer</button></td></tr>
+          <tr data-owner="Dupont Jean"><td>CTR-004</td><td><b>Karim Hadj</b></td><td>+216 77 666 555</td><td>Neoliane</td><td>175 TND</td><td><span style="color:var(--success)">✅</span></td><td><span style="color:var(--success)">✅</span></td><td><span style="color:var(--success)">✅</span></td><td><span class="badge badge-info">Validé Gestion</span></td><td><button class="btn btn-sm btn-secondary">Voir</button></td></tr>
+          <tr data-owner="Martin Sophie"><td>CTR-005</td><td><b>Leila Ben Ammar</b></td><td>+216 55 111 222</td><td>Alptis</td><td>120 TND</td><td><span style="color:var(--success)">✅</span></td><td><span style="color:var(--success)">✅</span></td><td><span style="color:var(--success)">✅</span></td><td><span class="badge badge-info">Validé Gestion</span></td><td><button class="btn btn-sm btn-secondary">Voir</button></td></tr>
+          <tr data-owner="Robert Nicolas"><td>CTR-006</td><td><b>Mohamed Trabelsi</b></td><td>+216 98 333 444</td><td>SPVIE</td><td>190 TND</td><td><span style="color:var(--success)">✅</span></td><td><span style="color:var(--success)">✅</span></td><td><span style="color:var(--success)">✅</span></td><td><span class="badge badge-success">Validé Manager</span></td><td><button class="btn btn-sm btn-secondary">Voir</button></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="tab-content" id="tab-contrats-incomplets">
+    <div class="warning-box">⏰ Relances automatiques: J+1, J+3, J+7 par WhatsApp + Email</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Dossier</th><th>Client</th><th>Documents manquants</th><th>Dernière relance</th><th>Prochaine relance</th><th>Actions</th></tr></thead>
+        <tbody>
+          <tr><td>CTR-002</td><td><b>Ahmed Ben Salah</b></td><td><span class="badge badge-danger">Carte Vitale</span></td><td>J+1 (21/05)</td><td>J+3 (23/05)</td><td><button class="btn btn-sm btn-warning">Relancer maintenant</button></td></tr>
+          <tr><td>CTR-003</td><td><b>Sophie Leroy</b></td><td><span class="badge badge-danger">CIN</span> <span class="badge badge-danger">RIB</span></td><td>J+3 (20/05)</td><td>J+7 (25/05)</td><td><button class="btn btn-sm btn-danger">Urgence J+7</button></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ===== VALIDATION ===== -->
+<div class="section" id="sec-validation">
+  <div class="page-header">
+    <div><div class="page-title">Agent Assurance — Validation Hiérarchique</div><div class="page-breadcrumb">LNR FINANCE / Agent Assurance / Validation</div></div>
+  </div>
+  <div class="stats-grid">
+    <div class="stat-card"><div class="label">En attente Gestion</div><div class="value">4</div><div class="change">À traiter (Sarra/Linda)</div></div>
+    <div class="stat-card"><div class="label">En attente Manager</div><div class="value">1</div><div class="change">Zakine uniquement</div></div>
+    <div class="stat-card"><div class="label">Validés définitivement</div><div class="value">86</div><div class="change up">Ce mois</div></div>
+    <div class="stat-card"><div class="label">Rejetés</div><div class="value">7</div><div class="change down">Retour commercial</div></div>
+  </div>
+  <div class="validation-steps">
+    <div class="v-step"><div class="v-step-box done">✅ Dossier créé</div></div>
+    <div class="v-step-arrow">→</div>
+    <div class="v-step"><div class="v-step-box active">1️⃣ Gestion validé</div></div>
+    <div class="v-step-arrow">→</div>
+    <div class="v-step"><div class="v-step-box">2️⃣ Manager validé</div></div>
+    <div class="v-step-arrow">→</div>
+    <div class="v-step"><div class="v-step-box">3️⃣ IT Intégration</div></div>
+    <div class="v-step-arrow">→</div>
+    <div class="v-step"><div class="v-step-box">✅ Contrat actif</div></div>
+  </div>
+  <div class="card">
+    <div class="card-title">📋 Étape 1 — Validation Gestion <span style="font-size:11px;color:var(--text2)">Sarra / Linda — Vérification documents</span></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Dossier</th><th>Client</th><th>Compagnie</th><th>Documents</th><th>Montant</th><th>Télévendeur</th><th>Actions</th></tr></thead>
+        <tbody>
+          <tr><td>CTR-004</td><td><b>Karim Hadj</b></td><td>Neoliane</td><td><span class="badge badge-success">Complet 3/3</span></td><td>175 TND/mois</td><td>Dupont Jean</td><td><button class="btn btn-sm btn-success" onclick="alert('Dossier CTR-004 validé par Gestion')">✅ Valider</button> <button class="btn btn-sm btn-danger">❌ Rejeter</button></td></tr>
+          <tr><td>CTR-005</td><td><b>Leila Ben Ammar</b></td><td>Alptis</td><td><span class="badge badge-success">Complet 3/3</span></td><td>120 TND/mois</td><td>Martin Sophie</td><td><button class="btn btn-sm btn-success" onclick="alert('Dossier CTR-005 validé par Gestion')">✅ Valider</button> <button class="btn btn-sm btn-danger">❌ Rejeter</button></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">🔐 Étape 2 — Validation Finale Manager <span style="font-size:11px;color:var(--text2)">M. Zakine uniquement — zakine@lnr-finance.fr</span></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Dossier</th><th>Client</th><th>Compagnie</th><th>Validé Gestion</th><th>Montant</th><th>Actions</th></tr></thead>
+        <tbody>
+          <tr><td>CTR-006</td><td><b>Mohamed Trabelsi</b></td><td>SPVIE</td><td><span class="badge badge-success">OUI — Sarra</span></td><td>190 TND/mois</td><td><button class="btn btn-sm btn-success" onclick="alert('Dossier CTR-006 validé définitivement par Manager')">🔐 Valider définitivement</button></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="info-box mt-16">📧 Alertes envoyées à: gestion@lnr-finance.fr, sarra@lnr-finance.fr, linda@lnr-finance.fr, <b>direction@lnr-finance.com</b>, <b>raadyassir19@gmail.com</b></div>
+  </div>
+  <div class="card">
+    <div class="card-title">💻 Étape 3 — Intégration IT <span style="font-size:11px;color:var(--text2)">Dridi Amine — Insertion portail assureur</span></div>
+    <div class="info-box">Les dossiers validés par le Manager sont automatiquement transmis à l'équipe IT pour insertion sur le portail assureur.</div>
+  </div>
+</div>
+
+
+<!-- ===== AUDIT ===== -->
+<div class="section" id="sec-audit">
+  <div class="page-header">
+    <div><div class="page-title">Agent Assurance — Audit Qualité IA</div><div class="page-breadcrumb">LNR FINANCE / Agent Assurance / Audit</div></div>
+    <div class="page-actions">
+      <button class="btn btn-sm btn-primary" onclick="openModal('modalAudit')">➕ Nouvel Audit</button>
+      <button class="btn btn-sm btn-secondary">📋 Audits en cours</button>
+      <button class="btn btn-sm btn-secondary">📤 Exporter</button>
+    </div>
+  </div>
+  <div class="stats-grid">
+    <div class="stat-card"><div class="label">Conformes 🟢 (9-10)</div><div class="value">42</div><div class="change up">60% des ventes</div></div>
+    <div class="stat-card"><div class="label">À corriger 🟠 (6-8)</div><div class="value">18</div><div class="change">25.7% des ventes</div></div>
+    <div class="stat-card"><div class="label">Non conformes 🔴 (0-5)</div><div class="value">10</div><div class="change down">14.3% des ventes</div></div>
+    <div class="stat-card"><div class="label">Score moyen</div><div class="value">7.8</div><div class="change up">/10 — Objectif: 7+</div></div>
+  </div>
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab('audit','liste-audits')">📋 Derniers Audits</button>
+    <button class="tab-btn" onclick="switchTab('audit','detail-audit')">🔍 Analyse DeepSeek</button>
+  </div>
+  <div class="tab-content active" id="tab-audit-liste-audits">
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Date</th><th>Commercial</th><th>Client</th><th>Compagnie</th><th>Score</th><th>Niveau</th><th>Alerte envoyée</th><th>Actions</th></tr></thead>
+        <tbody>
+          <tr><td>20/05/2026</td><td><b>Dupont Jean</b></td><td>Marie Dubois</td><td>Neoliane</td><td><span style="color:var(--success);font-weight:700">9.5</span>/10</td><td><span class="badge badge-success">🟢 CONFORME</span></td><td>—</td><td><button class="btn btn-sm btn-secondary">Voir</button></td></tr>
+          <tr><td>19/05/2026</td><td><b>Martin Sophie</b></td><td>Jean Leroy</td><td>Neoliane</td><td><span style="color:var(--warning);font-weight:700">7.0</span>/10</td><td><span class="badge badge-warning">🟠 À CORRIGER</span></td><td><span class="badge badge-danger">✅ Envoyée</span></td><td><button class="btn btn-sm btn-secondary">Voir</button></td></tr>
+          <tr><td>18/05/2026</td><td><b>Bernard Pierre</b></td><td>Fatima Ben Salah</td><td>Alptis</td><td><span style="color:var(--danger);font-weight:700">4.5</span>/10</td><td><span class="badge badge-danger">🔴 NON CONFORME</span></td><td><span class="badge badge-danger">✅ Envoyée</span></td><td><button class="btn btn-sm btn-secondary">Voir</button></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="info-box mt-16">📧 Alertes Orange/Rouge envoyées à: sarra@lnr-finance.fr, linda@lnr-finance.fr, gestion@lnr-finance.fr</div>
+  </div>
+  <div class="tab-content" id="tab-audit-detail-audit">
+    <div class="grid-2">
+      <div class="card" style="margin:0">
+        <div style="text-align:center;padding:8px 0 16px">
+          <div class="score-num orange">7.0</div>
+          <div style="font-size:14px;font-weight:600;margin-top:8px">Martin Sophie — Jean Leroy</div>
+          <div style="font-size:12px;color:var(--text2)">19/05/2026 • Neoliane</div>
+          <span class="badge badge-warning" style="margin-top:8px">🟠 À CORRIGER</span>
+        </div>
+        <div class="audit-criteria">
+          <div class="audit-row"><span class="criterion">Présentation (nom, société)</span><span style="color:var(--success);font-weight:600">2.0/2</span></div>
+          <div class="audit-row"><span class="criterion">Transparence de l'appel</span><span style="color:var(--warning);font-weight:600">1.5/2</span></div>
+          <div class="audit-row"><span class="criterion">Découverte des besoins</span><span style="color:var(--warning);font-weight:600">1.5/2</span></div>
+          <div class="audit-row"><span class="criterion">Qualité du conseil</span><span style="color:var(--warning);font-weight:600">1.5/2</span></div>
+          <div class="audit-row"><span class="criterion">Absence de pression</span><span style="color:var(--warning);font-weight:600">0.5/1</span></div>
+          <div class="audit-row"><span class="criterion">Consentement éclairé</span><span style="color:var(--danger);font-weight:600">0.0/1</span></div>
+        </div>
+      </div>
+      <div class="card" style="margin:0">
+        <div class="card-title">💡 Recommandations DeepSeek</div>
+        <div class="warning-box">🟠 Score 6-8 → Alerte envoyée à l'équipe Gestion</div>
+        <div class="form-group"><label>Points faibles détectés</label><textarea readonly style="font-size:12px">Consentement non recueilli explicitement. Légère pression sur l'offre limitée. Client hésitant, pas de reformulation des besoins.</textarea></div>
+        <div class="form-group"><label>Actions recommandées</label><textarea readonly style="font-size:12px">Reprendre la formation sur le consentement client et la gestion des objections. Programmer entretien sous 48h avec le manager.</textarea></div>
+        <div class="flex gap-8">
+          <button class="btn btn-warning" style="flex:1">📅 Planifier entretien</button>
+          <button class="btn btn-secondary" style="flex:1">📧 Re-notifier</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MARKETING ===== -->
+<div class="section" id="sec-marketing">
+  <div class="page-header">
+    <div><div class="page-title">Agent Marketing — Réseaux Sociaux</div><div class="page-breadcrumb">LNR FINANCE / Agent Marketing / Réseaux Sociaux</div></div>
+    <div class="page-actions">
+      <button class="btn btn-sm btn-primary" onclick="openModal('modalPost')">➕ Nouveau Post</button>
+      <button class="btn btn-sm btn-secondary">📅 Programmer</button>
+      <button class="btn btn-sm btn-secondary">📊 Analytics</button>
+    </div>
+  </div>
+  <div class="stats-grid">
+    <div class="stat-card"><div class="label">Followers Facebook</div><div class="value">3,200</div><div class="change up">+156 ce mois</div></div>
+    <div class="stat-card"><div class="label">Followers Instagram</div><div class="value">1,800</div><div class="change up">+89 ce mois</div></div>
+    <div class="stat-card"><div class="label">Followers LinkedIn</div><div class="value">892</div><div class="change up">+45 ce mois</div></div>
+    <div class="stat-card"><div class="label">Taux d'engagement</div><div class="value">4.8%</div><div class="change up">+0.6% vs mois dernier</div></div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Date</th><th>Heure</th><th>Réseaux</th><th>Contenu</th><th>Image</th><th>Portée</th><th>Engagement</th><th>Statut</th><th>Actions</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>21/05/2026</td><td>10:00</td>
+          <td><span style="font-size:16px">📘</span><span style="font-size:16px">📸</span></td>
+          <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">"Protégez votre santé avec LNR FINANCE..."</td>
+          <td><span class="badge badge-success">✅ Image jointe</span></td>
+          <td>4,820</td>
+          <td>142 likes, 23 com.</td>
+          <td><span class="badge badge-success">Publié</span></td>
+          <td><button class="btn btn-sm btn-secondary">Voir</button></td>
+        </tr>
+        <tr>
+          <td>22/05/2026</td><td>14:00</td>
+          <td><span style="font-size:16px">📘</span><span style="font-size:16px">💼</span></td>
+          <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">"LNR FINANCE recrute des télévendeurs..."</td>
+          <td><span class="badge badge-warning">⬜ Sans image</span></td>
+          <td>—</td><td>—</td>
+          <td><span class="badge badge-info">Programmé</span></td>
+          <td><button class="btn btn-sm btn-secondary">Modifier</button></td>
+        </tr>
+        <tr>
+          <td>23/05/2026</td><td>09:00</td>
+          <td><span style="font-size:16px">📘</span><span style="font-size:16px">📸</span><span style="font-size:16px">💼</span></td>
+          <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">"Nouveau partenariat Neoliane..."</td>
+          <td><span class="badge badge-success">✅ Image jointe</span></td>
+          <td>—</td><td>—</td>
+          <td><span class="badge badge-gray">Brouillon</span></td>
+          <td><button class="btn btn-sm btn-secondary">Éditer</button></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ===== ANALYTICS ===== -->
+<div class="section" id="sec-analytics">
+  <div class="page-header">
+    <div><div class="page-title">Agent Marketing — Analytics & ROI</div><div class="page-breadcrumb">LNR FINANCE / Agent Marketing / Analytics</div></div>
+    <div class="page-actions">
+      <button class="btn btn-sm btn-secondary">📤 Exporter Rapport</button>
+      <button class="btn btn-sm btn-primary">📄 Rapport Mensuel PDF</button>
+    </div>
+  </div>
+  <div class="stats-grid">
+    <div class="stat-card"><div class="label">Croissance CA (vs N-1)</div><div class="value">12.4%</div><div class="change down">Objectif: 15%</div></div>
+    <div class="stat-card"><div class="label">Taux conversion global</div><div class="value">6.9%</div><div class="change up">+0.8% vs mois dernier</div></div>
+    <div class="stat-card"><div class="label">CAC (€/client)</div><div class="value">€1,658</div><div class="change up">-12% optimisé</div></div>
+    <div class="stat-card"><div class="label">Délai moyen traitement</div><div class="value">4.2j</div><div class="change up">-1.3j vs N-1</div></div>
+  </div>
+  <div class="chart-grid">
+    <div class="chart-card"><h3>Performance par Commercial</h3><div class="chart-wrap"><canvas id="chartCommercial"></canvas></div></div>
+    <div class="chart-card"><h3>Répartition par Compagnie</h3><div class="chart-wrap"><canvas id="chartCompagnie"></canvas></div></div>
+  </div>
+  <div class="card">
+    <div class="card-title">📊 KPIs Mensuels Détaillés</div>
+    <div class="table-wrap">
+      <table class="kpi-table">
+        <thead><tr><th>Indicateur</th><th>Jan</th><th>Fév</th><th>Mar</th><th>Avr</th><th>Mai</th><th>Évolution</th></tr></thead>
+        <tbody>
+          <tr><td>Leads reçus</td><td>180</td><td>210</td><td>245</td><td>280</td><td>312</td><td class="trend-up">+73% ↑</td></tr>
+          <tr><td>Leads qualifiés</td><td>128</td><td>152</td><td>178</td><td>205</td><td>227</td><td class="trend-up">+77% ↑</td></tr>
+          <tr><td>RDV pris</td><td>32</td><td>38</td><td>45</td><td>52</td><td>58</td><td class="trend-up">+81% ↑</td></tr>
+          <tr><td>Contrats signés</td><td>45</td><td>52</td><td>68</td><td>78</td><td>86</td><td class="trend-up">+91% ↑</td></tr>
+          <tr><td>CA généré (K€)</td><td>98</td><td>112</td><td>128</td><td>138</td><td>142.8</td><td class="trend-up">+46% ↑</td></tr>
+          <tr><td>Taux conversion</td><td>5.2%</td><td>5.8%</td><td>6.1%</td><td>6.5%</td><td>6.9%</td><td class="trend-up">+1.7pts ↑</td></tr>
+          <tr><td>Taux ouverture J1</td><td>35%</td><td>37%</td><td>38%</td><td>41%</td><td>42.3%</td><td class="trend-up">+7.3pts ↑</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+
+<!-- ===== WORKFLOWS ===== -->
+<div class="section" id="sec-workflows">
+  <div class="page-header">
+    <div><div class="page-title">IT/Admin — Workflows n8n</div><div class="page-breadcrumb">LNR FINANCE / Système / Workflows</div></div>
+    <div class="page-actions">
+      <button class="btn btn-sm btn-danger">🔄 Redémarrer Tous</button>
+      <button class="btn btn-sm btn-secondary">📋 Logs Système</button>
+      <button class="btn btn-sm btn-secondary">⚙️ Config Webhooks</button>
+      <a href="https://lnrfinance.app.n8n.cloud" target="_blank" class="btn btn-sm btn-primary">🔗 Ouvrir n8n</a>
+    </div>
+  </div>
+  <div class="stats-grid">
+    <div class="stat-card"><div class="label">Workflows actifs</div><div class="value">11</div><div class="change up">11/11 configurés</div></div>
+    <div class="stat-card"><div class="label">Exécutions (24h)</div><div class="value">2,847</div><div class="change up">98.7% succès</div></div>
+    <div class="stat-card"><div class="label">Webhooks actifs</div><div class="value">5</div><div class="change">Tous opérationnels</div></div>
+    <div class="stat-card"><div class="label">Version n8n</div><div class="value" style="font-size:18px">1.50.0</div><div class="change up">À jour</div></div>
+  </div>
+  <div class="card">
+    <div class="card-title">⚡ Workflows n8n — 11 workflows complets</div>
+    <div class="info-box">Instance: <b>https://lnrfinance.app.n8n.cloud</b> — Authentification OAuth2 Google</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Nom</th><th>Déclencheur</th><th>Fréquence</th><th>Exéc. (24h)</th><th>Taux succès</th><th>Statut</th><th>Actions</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td><b>Recrutement Complet</b></td><td>Webhook HTTP POST</td><td>À la demande</td><td>3</td><td style="color:var(--success)">100%</td><td><span class="badge badge-success">Actif</span></td><td><button class="btn btn-sm btn-secondary">Logs</button></td></tr>
+          <tr><td>2</td><td><b>Pointage Quotidien</b></td><td>Schedule 9h30</td><td>Quotidien</td><td>1</td><td style="color:var(--success)">100%</td><td><span class="badge badge-success">Actif</span></td><td><button class="btn btn-sm btn-secondary">Logs</button></td></tr>
+          <tr><td>3</td><td><b>CNSS Mensuel</b></td><td>Schedule 28 9h00</td><td>Mensuel</td><td>0</td><td>—</td><td><span class="badge badge-success">Actif</span></td><td><button class="btn btn-sm btn-secondary">Logs</button></td></tr>
+          <tr><td>4</td><td><b>Qualification Massive</b></td><td>Schedule / Webhook</td><td>Automatique</td><td>18</td><td style="color:var(--success)">100%</td><td><span class="badge badge-success">Actif</span></td><td><button class="btn btn-sm btn-secondary">Logs</button></td></tr>
+          <tr><td>5</td><td><b>Distribution Leads Poker</b></td><td>Webhook / Schedule</td><td>Automatique</td><td>24</td><td style="color:var(--success)">100%</td><td><span class="badge badge-success">Actif</span></td><td><button class="btn btn-sm btn-secondary">Logs</button></td></tr>
+          <tr><td>6</td><td><b>Envoi Instantly (Emails)</b></td><td>Schedule horaire</td><td>Toutes les heures</td><td>47</td><td style="color:var(--success)">98.3%</td><td><span class="badge badge-success">Actif</span></td><td><button class="btn btn-sm btn-secondary">Logs</button></td></tr>
+          <tr><td>7</td><td><b>Webhook Instantly (Tracking)</b></td><td>Webhook Instantly</td><td>Temps réel</td><td>312</td><td style="color:var(--success)">99.7%</td><td><span class="badge badge-success">Actif</span></td><td><button class="btn btn-sm btn-secondary">Logs</button></td></tr>
+          <tr><td>8</td><td><b>Gestion RDV Cal.com</b></td><td>Webhook Cal.com</td><td>À la demande</td><td>5</td><td style="color:var(--success)">100%</td><td><span class="badge badge-warning">⬜ À configurer</span></td><td><button class="btn btn-sm btn-secondary">Logs</button></td></tr>
+          <tr><td>9</td><td><b>Réintégration NRP</b></td><td>Schedule 1h00</td><td>Toutes les heures</td><td>5</td><td style="color:var(--success)">100%</td><td><span class="badge badge-success">Actif</span></td><td><button class="btn btn-sm btn-secondary">Logs</button></td></tr>
+          <tr><td>10</td><td><b>Relance Documents Assurance</b></td><td>Schedule / Trigger</td><td>J+1, J+3, J+7</td><td>8</td><td style="color:var(--success)">100%</td><td><span class="badge badge-success">Actif</span></td><td><button class="btn btn-sm btn-secondary">Logs</button></td></tr>
+          <tr><td>11</td><td><b>Audit Vente DeepSeek</b></td><td>Manuel / Trigger</td><td>À la demande</td><td>2</td><td style="color:var(--success)">100%</td><td><span class="badge badge-success">Actif</span></td><td><button class="btn btn-sm btn-secondary">Logs</button></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">⚙️ Configuration des Agents IA</div>
+    <div class="grid-2">
+      <div class="config-section"><h4>Agent RH Recrutement</h4>
+        <div class="config-row"><span>Statut</span><span class="badge badge-success">En ligne</span></div>
+        <div class="config-row"><span>Webhook n8n</span><input style="background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:3px 8px;color:var(--text);font-size:11px;width:200px" value="https://lnrfinance.app.n8n.cloud/webhook/recrutement"></div>
+        <div class="config-row"><span>Modèle IA</span><select style="background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:3px;color:var(--text);font-size:11px"><option>DeepSeek API</option><option>Ollama Local</option></select></div>
+        <div class="config-row"><span>Base données</span><span style="font-size:11px;color:var(--accent)">Google Sheets (CANDIDATS)</span></div>
+        <div style="display:flex;gap:6px;margin-top:8px"><button class="btn btn-sm btn-secondary">🧪 Tester</button><button class="btn btn-sm btn-secondary">📋 Logs</button></div>
+      </div>
+      <div class="config-section"><h4>Agent Qualification Leads</h4>
+        <div class="config-row"><span>Statut</span><span class="badge badge-success">En ligne</span></div>
+        <div class="config-row"><span>DeepSeek API Key</span><input type="password" style="background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:3px 8px;color:var(--text);font-size:11px;width:160px" value="sk-••••••••••••••••"></div>
+        <div class="config-row"><span>Webhook leads</span><span style="font-size:11px;color:var(--accent)">lnrfinance.app.n8n.cloud/webhook/lead-capture</span></div>
+        <div style="display:flex;gap:6px;margin-top:8px"><button class="btn btn-sm btn-secondary">🧪 Tester</button><button class="btn btn-sm btn-secondary">📋 Logs</button></div>
+      </div>
+      <div class="config-section"><h4>Agent Campagnes Instantly</h4>
+        <div class="config-row"><span>Statut</span><span class="badge badge-success">En ligne</span></div>
+        <div class="config-row"><span>Instantly API Key</span><input type="password" style="background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:3px 8px;color:var(--text);font-size:11px;width:160px" placeholder="inst_••••••••••••••••"></div>
+        <div class="config-row"><span>Webhook tracking</span><span style="font-size:11px;color:var(--accent)">lnrfinance.app.n8n.cloud/webhook/instantly</span></div>
+        <div style="display:flex;gap:6px;margin-top:8px"><button class="btn btn-sm btn-secondary">🧪 Tester</button><button class="btn btn-sm btn-secondary">📋 Logs</button></div>
+      </div>
+      <div class="config-section"><h4>Agent Audit Qualité</h4>
+        <div class="config-row"><span>Statut</span><span class="badge badge-success">En ligne</span></div>
+        <div class="config-row"><span>Seuil Vert ≥</span><input type="number" value="9" style="background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:3px 8px;color:var(--text);font-size:11px;width:60px"></div>
+        <div class="config-row"><span>Seuil Orange ≥</span><input type="number" value="6" style="background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:3px 8px;color:var(--text);font-size:11px;width:60px"></div>
+        <div class="config-row"><span>Seuil Rouge &lt;</span><input type="number" value="6" style="background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:3px 8px;color:var(--text);font-size:11px;width:60px"></div>
+        <div style="display:flex;gap:6px;margin-top:8px"><button class="btn btn-sm btn-secondary">🧪 Tester</button><button class="btn btn-sm btn-secondary">📋 Logs</button></div>
+      </div>
+      <div class="config-section"><h4>Agent Assurance Relances</h4>
+        <div class="config-row"><span>Statut</span><span class="badge badge-success">En ligne</span></div>
+        <div class="config-row"><span>Délais relances</span><span style="font-size:11px">J+1 / J+3 / J+7</span></div>
+        <div style="display:flex;gap:6px;margin-top:8px"><button class="btn btn-sm btn-secondary">🧪 Tester</button><button class="btn btn-sm btn-secondary">📋 Logs</button></div>
+      </div>
+      <div class="config-section"><h4>Intégrations Actives</h4>
+        <div class="integrations-grid" style="grid-template-columns:1fr 1fr;gap:8px">
+          <div class="int-card"><div class="int-icon">📊</div><div class="int-info"><div class="name">Google Sheets</div><div class="status connected"><span class="dot" style="width:6px;height:6px"></span>Connecté</div></div></div>
+          <div class="int-card"><div class="int-icon">🤖</div><div class="int-info"><div class="name">DeepSeek API</div><div class="status connected"><span class="dot" style="width:6px;height:6px"></span>Connecté</div></div></div>
+          <div class="int-card"><div class="int-icon">📧</div><div class="int-info"><div class="name">Instantly</div><div class="status pending"><span class="dot" style="width:6px;height:6px;background:var(--warning)"></span>À configurer</div></div></div>
+          <div class="int-card"><div class="int-icon">📅</div><div class="int-info"><div class="name">Cal.com</div><div class="status pending"><span class="dot" style="width:6px;height:6px;background:var(--warning)"></span>À configurer</div></div></div>
+          <div class="int-card"><div class="int-icon">💬</div><div class="int-info"><div class="name">WhatsApp API</div><div class="status pending"><span class="dot" style="width:6px;height:6px;background:var(--warning)"></span>À configurer</div></div></div>
+          <div class="int-card"><div class="int-icon">🗄️</div><div class="int-info"><div class="name">Supabase</div><div class="status pending"><span class="dot" style="width:6px;height:6px;background:var(--warning)"></span>À créer</div></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== PARAMETRES ===== -->
+<div class="section" id="sec-parametres">
+  <div class="page-header">
+    <div><div class="page-title">Paramètres Système</div><div class="page-breadcrumb">LNR FINANCE / Système / Paramètres</div></div>
+    <div class="page-actions"><button class="btn btn-primary" onclick="alert('Paramètres sauvegardés !')">💾 Sauvegarder les paramètres</button></div>
+  </div>
+  <div class="grid-2">
+    <div class="card" style="margin:0">
+      <div class="card-title">🏢 Entreprise</div>
+      <div class="form-group"><label>Nom de l'entreprise</label><input value="LNR FINANCE"></div>
+      <div class="form-group"><label>ORIAS</label><input value="n°24000175"></div>
+      <div class="form-group"><label>Email direction RH</label><input value="direction.rh@lnr-finance.fr"></div>
+      <div class="form-group"><label>Email comptabilité (CNSS)</label><input value="service.comptabilite@lnr-finance.fr"></div>
+      <div class="form-group"><label>Email gestion (validation dossiers)</label><input value="gestion@lnr-finance.fr"></div>
+      <div class="form-group"><label>Email Sarra (validation dossiers)</label><input value="sarra@lnr-finance.fr"></div>
+      <div class="form-group"><label>Email Linda (validation dossiers)</label><input value="linda@lnr-finance.fr"></div>
+      <div class="form-group"><label>Email direction (alertes dossiers)</label><input value="direction@lnr-finance.com"></div>
+      <div class="form-group"><label>Email Yassir (alertes dossiers)</label><input value="raadyassir19@gmail.com"></div>
+    </div>
+    <div class="card" style="margin:0">
+      <div class="card-title">🔔 Notifications</div>
+      <div class="config-row"><span>Notifications WhatsApp<div class="desc">Meta Business API</div></span><label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label></div>
+      <div class="config-row"><span>Notifications Email<div class="desc">SMTP automatique</div></span><label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label></div>
+      <div class="config-row"><span>Alertes Manager<div class="desc">Copie avertissements majeurs</div></span><label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label></div>
+      <div class="config-row"><span>Alerte taux ouverture &lt; 30%<div class="desc">Campagnes Instantly</div></span><label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label></div>
+      <hr class="section-divider">
+      <div class="card-title">🤖 Intelligence Artificielle</div>
+      <div class="config-row"><span>DeepSeek API (Cloud)<div class="desc">Scoring leads, audit vente</div></span><label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label></div>
+      <div class="config-row"><span>Ollama Local (Fallback)<div class="desc">Modèle local de secours</div></span><label class="toggle"><input type="checkbox"><span class="toggle-slider"></span></label></div>
+      <div class="config-row"><span>Auto-qualification leads<div class="desc">Qualifier automatiquement les nouveaux leads</div></span><label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== DOCUMENTATION ===== -->
+<div class="section" id="sec-documentation">
+  <div class="page-header">
+    <div><div class="page-title">Documentation & Guides</div><div class="page-breadcrumb">LNR FINANCE / Documentation</div></div>
+  </div>
+  <div class="grid-2">
+    <div class="card" style="cursor:pointer" onclick="alert('Guide Agent RH')"><div class="flex items-center gap-12"><span style="font-size:28px">👥</span><div><div style="font-weight:600">Guide Agent RH Recrutement</div><div class="text-sm text-muted">Configuration, scoring IA, webhooks, notifications automatiques</div></div></div></div>
+    <div class="card" style="cursor:pointer" onclick="alert('Guide Leads & Poker')"><div class="flex items-center gap-12"><span style="font-size:28px">🎯</span><div><div style="font-weight:600">Guide Agent Leads & Poker</div><div class="text-sm text-muted">Import CSV, qualification IA, distribution équitable, cycle de vie</div></div></div></div>
+    <div class="card" style="cursor:pointer" onclick="alert('Guide Campagnes Instantly')"><div class="flex items-center gap-12"><span style="font-size:28px">📧</span><div><div style="font-weight:600">Guide Campagnes Instantly</div><div class="text-sm text-muted">Templates J1/J3/J7/J15, anti-spam DNS, tracking ouvertures</div></div></div></div>
+    <div class="card" style="cursor:pointer" onclick="alert('Guide Agent Assurance')"><div class="flex items-center gap-12"><span style="font-size:28px">📁</span><div><div style="font-weight:600">Guide Agent Assurance</div><div class="text-sm text-muted">Insertion dossier, validation hiérarchique, relances automatiques</div></div></div></div>
+    <div class="card" style="cursor:pointer" onclick="alert('Guide n8n Workflows')"><div class="flex items-center gap-12"><span style="font-size:28px">⚡</span><div><div style="font-weight:600">Guide n8n Workflows (11 workflows)</div><div class="text-sm text-muted">Installation, configuration, import/export JSON, dépannage</div></div></div></div>
+    <div class="card" style="cursor:pointer" onclick="alert('Guide Intégrations API')"><div class="flex items-center gap-12"><span style="font-size:28px">🔗</span><div><div style="font-weight:600">Guide Intégrations API</div><div class="text-sm text-muted">Google Sheets, WhatsApp, Meta API, DeepSeek, Cal.com, Instantly</div></div></div></div>
+  </div>
+</div>
+
+    </div><!-- end main -->
+  </div><!-- end layout -->
+</div><!-- end app -->
+
+
+<!-- ============ MODALS ============ -->
+
+<!-- Modal Candidature (avec upload CV) -->
+<div class="modal-overlay" id="modalCandidat">
+  <div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">👤 Nouvelle Candidature</div><button class="modal-close" onclick="closeModal('modalCandidat')">✕</button></div>
+    <div class="form-section-title">Informations Personnelles</div>
+    <div class="form-row"><div class="form-group"><label>Nom *</label><input placeholder="Nom de famille"></div><div class="form-group"><label>Prénom *</label><input placeholder="Prénom"></div></div>
+    <div class="form-row"><div class="form-group"><label>Téléphone *</label><input placeholder="+216 XX XXX XXX"></div><div class="form-group"><label>Email *</label><input type="email" placeholder="email@example.com"></div></div>
+    <div class="form-section-title">Candidature</div>
+    <div class="form-row"><div class="form-group"><label>Poste souhaité *</label><select><option>Télévendeur</option><option>Chargé RDV</option><option>Chef d'équipe</option><option>Gestionnaire</option></select></div><div class="form-group"><label>Expérience (années)</label><input type="number" min="0" max="30" placeholder="0"></div></div>
+    <div class="form-group"><label>Expérience Mutuelle Santé</label><select><option>Aucune</option><option>Moins d'1 an</option><option>1-2 ans</option><option>2-5 ans</option><option>Plus de 5 ans</option></select></div>
+    <div class="form-group"><label>Disponibilité</label><select><option>Immédiate</option><option>1 mois</option><option>2 mois</option><option>3 mois</option></select></div>
+    <div class="form-group"><label>Niveau de Français</label><select><option>Excellent</option><option>Bon</option><option>Moyen</option><option>Débutant</option></select></div>
+    <div class="form-section-title">📄 CV et Documents</div>
+    <div class="file-upload" onclick="document.getElementById('cvFile').click()">
+      <input type="file" id="cvFile" accept=".pdf,.doc,.docx,.jpg,.png" onchange="showFileName(this,'cvLabel')">
+      <div class="icon">📄</div>
+      <p>Cliquez pour joindre le CV (PDF, Word, Image)</p>
+      <p id="cvLabel" class="uploaded" style="display:none"></p>
+    </div>
+    <div class="form-group mt-16"><label>Commentaire</label><textarea placeholder="Informations complémentaires sur le candidat..."></textarea></div>
+    <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('modalCandidat')">Annuler</button><button class="btn btn-primary" onclick="alert('Candidature soumise ! Analyse IA en cours...');closeModal('modalCandidat')">🤖 Soumettre & Analyser IA</button></div>
+  </div>
+</div>
+
+<!-- Modal Lead -->
+<div class="modal-overlay" id="modalLead">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">🎯 Nouveau Lead</div><button class="modal-close" onclick="closeModal('modalLead')">✕</button></div>
+    <div class="form-row"><div class="form-group"><label>Prénom *</label><input placeholder="Prénom"></div><div class="form-group"><label>Nom *</label><input placeholder="Nom"></div></div>
+    <div class="form-row"><div class="form-group"><label>Téléphone *</label><input placeholder="+216 XX XXX XXX"></div><div class="form-group"><label>Email</label><input type="email" placeholder="email@example.com"></div></div>
+    <div class="form-row"><div class="form-group"><label>Âge *</label><input type="number" min="18" max="99"></div><div class="form-group"><label>Code postal *</label><input placeholder="1002"></div></div>
+    <div class="form-row"><div class="form-group"><label>Mutuelle actuelle</label><input placeholder="CNSS, AMC, autre..."></div><div class="form-group"><label>Type de lead</label><select><option>SENIOR_SEUL</option><option>SENIOR_COUPLE</option><option>RETRAITE_FAMILLE</option><option>PRE_RETRAITE</option><option>AUTRE</option></select></div></div>
+    <div class="form-group"><label>Source</label><select><option>Formulaire web</option><option>Import CSV</option><option>Partenaire</option><option>Parrainage</option></select></div>
+    <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('modalLead')">Annuler</button><button class="btn btn-primary" onclick="alert('Lead ajouté ! Qualification IA automatique...');closeModal('modalLead')">🤖 Ajouter & Qualifier IA</button></div>
+  </div>
+</div>
+
+<!-- Modal RDV -->
+<div class="modal-overlay" id="modalRDV">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">📅 Nouveau RDV</div><button class="modal-close" onclick="closeModal('modalRDV')">✕</button></div>
+    <div class="form-row"><div class="form-group"><label>Date *</label><input type="date"></div><div class="form-group"><label>Heure *</label><input type="time"></div></div>
+    <div class="form-row"><div class="form-group"><label>Client *</label><input placeholder="Nom du client"></div><div class="form-group"><label>Téléphone</label><input placeholder="+216 XX XXX XXX"></div></div>
+    <div class="form-row"><div class="form-group"><label>Commercial *</label><select><option>Robert Nicolas</option><option>Dupont Jean</option><option>Bernard Pierre</option><option>Martin Sophie</option><option>Petit Marie</option><option>Richard Isabelle</option></select></div><div class="form-group"><label>Type</label><select><option>Présentiel</option><option>Visio</option><option>Téléphonique</option></select></div></div>
+    <div class="form-group"><label>Lien Cal.com (optionnel)</label><input placeholder="https://cal.com/..."></div>
+    <div class="form-group"><label>Notes</label><textarea placeholder="Informations sur le client, contexte..."></textarea></div>
+    <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('modalRDV')">Annuler</button><button class="btn btn-primary" onclick="alert('RDV créé ! Confirmation envoyée au client.');closeModal('modalRDV')">✅ Créer RDV</button></div>
+  </div>
+</div>
+
+<!-- Modal Contrat (complet avec tous les champs du CDC) -->
+<div class="modal-overlay" id="modalContrat">
+  <div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">📁 Nouveau Dossier Contrat</div><button class="modal-close" onclick="closeModal('modalContrat')">✕</button></div>
+    <div class="form-section-title">Identité du Souscripteur</div>
+    <div class="form-row"><div class="form-group"><label>Nom *</label><input placeholder="Nom de famille"></div><div class="form-group"><label>Prénom *</label><input placeholder="Prénom"></div></div>
+    <div class="form-row"><div class="form-group"><label>Téléphone *</label><input placeholder="+216 XX XXX XXX"></div><div class="form-group"><label>Email *</label><input type="email"></div></div>
+    <div class="form-row"><div class="form-group"><label>Date de naissance *</label><input type="date"></div><div class="form-group"><label>Profession</label><input placeholder="Profession"></div></div>
+    <div class="form-group single"><label>Adresse</label><input placeholder="Adresse complète"></div>
+    <div class="form-section-title">Informations Contrat</div>
+    <div class="form-row"><div class="form-group"><label>Numéro adhérent</label><input placeholder="N° adhérent"></div><div class="form-group"><label>Type de signature *</label><select><option>Électronique</option><option>Manuscrite</option><option>Téléphonique enregistrée</option></select></div></div>
+    <div class="form-row"><div class="form-group"><label>Compagnie *</label><select><option>Neoliane</option><option>Alptis</option><option>SPVIE</option></select></div><div class="form-group"><label>Date d'effet *</label><input type="date"></div></div>
+    <div class="form-row triple"><div class="form-group"><label>Montant VP/mois (TND) *</label><input type="number" placeholder="0"></div><div class="form-group"><label>Frais d'entrée (TND)</label><input type="number" placeholder="0"></div><div class="form-group"><label>Frais dossier (TND)</label><input type="number" placeholder="0"></div></div>
+    <div class="form-row"><div class="form-group"><label>Ancienne mutuelle</label><input placeholder="Mutuelle précédente"></div><div class="form-group"><label>Type de résiliation</label><select><option>Résiliation à l'échéance</option><option>Résiliation loi Chatel</option><option>Résiliation loi Hamon</option><option>Pas de résiliation</option></select></div></div>
+    <div class="form-row"><div class="form-group"><label>Intérêt client</label><select><option>Économies sur la cotisation</option><option>Meilleure couverture</option><option>Remboursements optiques/dentaires</option><option>Hospitalisation</option><option>Autre</option></select></div><div class="form-group"><label>Apporteur d'affaire</label><input placeholder="Nom de l'apporteur"></div></div>
+    <div class="form-group single"><label>Commentaire</label><textarea placeholder="Informations complémentaires..."></textarea></div>
+    <div class="form-section-title">📎 Pièces Jointes Obligatoires</div>
+    <div class="grid-3">
+      <div class="file-upload" onclick="document.getElementById('cinFile').click()">
+        <input type="file" id="cinFile" accept=".pdf,.jpg,.png" onchange="showFileName(this,'cinLabel')">
+        <div class="icon">🪪</div><p><b>CIN *</b><br>Carte d'identité nationale</p>
+        <p id="cinLabel" class="uploaded" style="display:none"></p>
+      </div>
+      <div class="file-upload" onclick="document.getElementById('vitaleFile').click()">
+        <input type="file" id="vitaleFile" accept=".pdf,.jpg,.png" onchange="showFileName(this,'vitaleLabel')">
+        <div class="icon">💳</div><p><b>Carte Vitale *</b><br>ou Attestation droits</p>
+        <p id="vitaleLabel" class="uploaded" style="display:none"></p>
+      </div>
+      <div class="file-upload" onclick="document.getElementById('ribFile').click()">
+        <input type="file" id="ribFile" accept=".pdf,.jpg,.png" onchange="showFileName(this,'ribLabel')">
+        <div class="icon">🏦</div><p><b>RIB *</b><br>Relevé d'identité bancaire</p>
+        <p id="ribLabel" class="uploaded" style="display:none"></p>
+      </div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('modalContrat')">Annuler</button><button class="btn btn-primary" onclick="alert('Dossier créé ! Envoyé en validation Gestion.');closeModal('modalContrat')">📤 Soumettre en Validation</button></div>
+  </div>
+</div>
+
+<!-- Modal Post Marketing (avec upload image) -->
+<div class="modal-overlay" id="modalPost">
+  <div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">📱 Nouveau Post Réseaux Sociaux</div><button class="modal-close" onclick="closeModal('modalPost')">✕</button></div>
+    <div class="form-section-title">Réseaux & Planification</div>
+    <div style="display:flex;gap:10px;margin-bottom:16px">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" checked> 📘 Facebook</label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" checked> 📸 Instagram</label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox"> 💼 LinkedIn</label>
+    </div>
+    <div class="form-row"><div class="form-group"><label>Date de publication *</label><input type="date"></div><div class="form-group"><label>Heure *</label><input type="time" value="10:00"></div></div>
+    <div class="form-group"><label>Contenu du post *</label><textarea style="min-height:120px" placeholder="Rédigez votre message ici... (DeepSeek peut l'optimiser)"></textarea></div>
+    <div class="form-group"><label>Hashtags (séparés par des espaces)</label><input placeholder="#mutuellesanté #lnrfinance #senior #assurance"></div>
+    <div class="form-section-title">🖼️ Image / Visuel</div>
+    <div class="file-upload" onclick="document.getElementById('postImage').click()">
+      <input type="file" id="postImage" accept=".jpg,.jpeg,.png,.gif,.mp4" onchange="showFileName(this,'postImageLabel');previewImage(this)">
+      <div class="icon">🖼️</div>
+      <p>Cliquez pour joindre une image ou vidéo<br><span style="font-size:11px;color:var(--text2)">JPG, PNG, GIF, MP4 — Max 10MB</span></p>
+      <p id="postImageLabel" class="uploaded" style="display:none"></p>
+    </div>
+    <div id="postPreview" style="display:none;margin-top:10px"><img id="postPreviewImg" style="max-height:150px;border-radius:8px;border:1px solid var(--border)"></div>
+    <div class="form-section-title">🤖 Optimisation IA</div>
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-secondary" onclick="alert('DeepSeek optimise votre contenu SEO...')">✨ Optimiser avec DeepSeek</button>
+      <button class="btn btn-secondary" onclick="alert('Hashtags tendance générés !')">🔍 Générer hashtags</button>
+    </div>
+    <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('modalPost')">Annuler</button><button class="btn btn-secondary" onclick="alert('Post sauvegardé en brouillon.');closeModal('modalPost')">💾 Brouillon</button><button class="btn btn-primary" onclick="alert('Post programmé !');closeModal('modalPost')">📅 Programmer</button></div>
+  </div>
+</div>
+
+<!-- Modal Campagne Instantly -->
+<div class="modal-overlay" id="modalCampagne">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">📧 Nouvelle Campagne Instantly</div><button class="modal-close" onclick="closeModal('modalCampagne')">✕</button></div>
+    <div class="form-group"><label>Nom de la campagne *</label><input placeholder="Campagne Mutuelle Seniors Juin 2026"></div>
+    <div class="form-row"><div class="form-group"><label>Type / Jour *</label><select><option>J1 — Découverte</option><option>J3 — Relance</option><option>J7 — Urgence</option><option>J15 — Rupture de glace</option></select></div><div class="form-group"><label>Date de début *</label><input type="date"></div></div>
+    <div class="form-group"><label>Leads cibles</label><select><option>Score &gt; 70 (Prioritaire)</option><option>Score 50-70 (Moyen)</option><option>Tous les qualifiés</option><option>NRP réintégrés</option></select></div>
+    <div class="form-group"><label>Quota journalier (emails/compte)</label><input type="number" value="20"></div>
+    <div class="form-group"><label>Template</label><select><option>Template J1 — Découverte</option><option>Template J3 — Témoignage</option><option>Template J7 — Urgence</option><option>Template J15 — Rupture de glace</option></select></div>
+    <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('modalCampagne')">Annuler</button><button class="btn btn-primary" onclick="alert('Campagne créée et programmée !');closeModal('modalCampagne')">🚀 Lancer Campagne</button></div>
+  </div>
+</div>
+
+<!-- Modal Audit -->
+<div class="modal-overlay" id="modalAudit">
+  <div class="modal modal-lg">
+    <div class="modal-header"><div class="modal-title">🔍 Nouvel Audit Qualité</div><button class="modal-close" onclick="closeModal('modalAudit')">✕</button></div>
+    <div class="form-row"><div class="form-group"><label>Commercial *</label><select><option>Dupont Jean</option><option>Martin Sophie</option><option>Bernard Pierre</option><option>Robert Nicolas</option></select></div><div class="form-group"><label>Client</label><input placeholder="Nom du client"></div></div>
+    <div class="form-row"><div class="form-group"><label>Date de la vente *</label><input type="date"></div><div class="form-group"><label>Compagnie</label><select><option>Neoliane</option><option>Alptis</option><option>SPVIE</option></select></div></div>
+    <div class="form-group"><label>Transcription de l'appel *</label><textarea style="min-height:150px" placeholder="Collez ici la transcription de l'appel ou le résumé de la vente..."></textarea></div>
+    <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('modalAudit')">Annuler</button><button class="btn btn-primary" onclick="alert('Analyse DeepSeek en cours...');closeModal('modalAudit')">🤖 Analyser avec DeepSeek</button></div>
+  </div>
+</div>
+
+<!-- Modal Employé -->
+<div class="modal-overlay" id="modalEmploye">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">👤 Nouvel Employé</div><button class="modal-close" onclick="closeModal('modalEmploye')">✕</button></div>
+    <div class="form-row"><div class="form-group"><label>Nom *</label><input placeholder="Nom"></div><div class="form-group"><label>Prénom *</label><input placeholder="Prénom"></div></div>
+    <div class="form-row"><div class="form-group"><label>Poste *</label><select><option>Télévendeur</option><option>Chargé RDV</option><option>Commercial</option><option>Chef d'équipe</option><option>Gestionnaire</option></select></div><div class="form-group"><label>Salaire brut (TND)</label><input type="number"></div></div>
+    <div class="form-row"><div class="form-group"><label>Email LNR *</label><input type="email" placeholder="prenom.nom@lnr-finance.fr"></div><div class="form-group"><label>Téléphone</label><input placeholder="+216 XX XXX XXX"></div></div>
+    <div class="form-row"><div class="form-group"><label>Matricule CNSS</label><input placeholder="CNSS-00X"></div><div class="form-group"><label>CIN</label><input placeholder="Numéro CIN"></div></div>
+    <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('modalEmploye')">Annuler</button><button class="btn btn-primary" onclick="alert('Employé ajouté !');closeModal('modalEmploye')">✅ Ajouter</button></div>
+  </div>
+</div>
+
+<!-- Modal RDV Calendrier -->
+<div class="modal-overlay" id="modalCalRDV">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title" id="calModalTitle">📅 Créer un RDV</div><button class="modal-close" onclick="closeModal('modalCalRDV')">✕</button></div>
+    <div class="form-row"><div class="form-group"><label>Date</label><input type="date" id="calModalDate"></div><div class="form-group"><label>Heure</label><input type="time" value="09:00"></div></div>
+    <div class="form-group"><label>Client</label><input placeholder="Nom du client"></div>
+    <div class="form-group"><label>Commercial</label><select><option>Robert Nicolas</option><option>Dupont Jean</option><option>Bernard Pierre</option><option>Martin Sophie</option></select></div>
+    <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('modalCalRDV')">Annuler</button><button class="btn btn-primary" onclick="alert('RDV créé !');closeModal('modalCalRDV')">✅ Créer</button></div>
+  </div>
+</div>
+
+
+<script>
+// ===== STATE =====
+let currentRole = 'manager';
+let currentUser = 'M. Zakine';
+let currentRoleName = 'Manager';
+let calYear, calMonth;
+
+// ===== LOGIN =====
+function selectRole(role, name, label) {
+  currentRole = role;
+  currentUser = name;
+  currentRoleName = label;
+  document.querySelectorAll('.role-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+}
+
+function doLogin() {
+  const email = document.getElementById('loginEmail').value;
+  document.getElementById('loginPage').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+  document.getElementById('userName').textContent = currentUser;
+  document.getElementById('userRole').textContent = currentRoleName;
+  const initials = currentUser.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+  document.getElementById('userAvatar').textContent = initials;
+  document.getElementById('sidebarAvatar').textContent = initials;
+  document.getElementById('sidebarName').textContent = currentUser;
+  document.getElementById('sidebarRole').textContent = currentRoleName;
+  document.getElementById('topbarInfo').textContent = 'Plateforme Intelligente — ' + currentRoleName;
+  applyRolePermissions(); // gère aussi la section par défaut selon le rôle
+  applyDataFilters();
+  // Dashboard affiché par défaut pour Manager et IT uniquement
+  if (currentRole === 'manager' || currentRole === 'it') showSection('dashboard');
+  initCalendar();
+  initCharts();
+  document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString('fr-FR');
+}
+
+function doLogout() {
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('loginPage').style.display = 'flex';
+}
+
+function applyRolePermissions() {
+  const navRH  = document.getElementById('nav-rh');
+  const navCom = document.getElementById('nav-commercial');
+  const navAss = document.getElementById('nav-assurance');
+  const navMkt = document.getElementById('nav-marketing');
+  const navSys = document.getElementById('nav-system');
+  const all    = [navRH, navCom, navAss, navMkt, navSys];
+
+  // Reset — tout visible
+  all.forEach(n => { if (n) n.style.display = ''; });
+
+  // Règles par rôle
+  const rules = {
+    // Gestion : uniquement Agent Assurance
+    'gestion':     [navRH, navCom, navMkt, navSys],
+    // Télévendeur : uniquement Agent Assurance (ses dossiers) + Commercial (ses leads/RDV)
+    'televendeur': [navRH, navMkt, navSys],
+    // Commercial : uniquement Agent Commercial + Assurance (ses contrats)
+    'commercial':  [navRH, navMkt, navSys],
+    // Agent RH : uniquement Agent RH
+    'rh':          [navCom, navAss, navMkt, navSys],
+    // Manager & IT/Admin : tout visible (pas de restriction)
+  };
+
+  const hidden = rules[currentRole] || [];
+  hidden.forEach(n => { if (n) n.style.display = 'none'; });
+
+  // Rediriger vers la section par défaut selon le rôle
+  const defaultSection = {
+    'gestion':    'contrats',
+    'televendeur':'contrats',
+    'commercial': 'leads',
+    'rh':         'recrutement',
+    'it':         'workflows',
+  };
+  if (defaultSection[currentRole]) {
+    showSection(defaultSection[currentRole]);
+  }
+}
+
+// ===== NAVIGATION =====
+function showSection(name) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  const sec = document.getElementById('sec-' + name);
+  if (sec) sec.classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(n => {
+    if (n.getAttribute('onclick') && n.getAttribute('onclick').includes("'" + name + "'")) {
+      n.classList.add('active');
+    }
+  });
+  window.scrollTo(0,0);
+}
+
+// ===== TABS =====
+function switchTab(section, tab) {
+  const allContents = document.querySelectorAll('#sec-' + section + ' .tab-content');
+  const allBtns = document.querySelectorAll('#sec-' + section + ' .tab-btn');
+  allContents.forEach(c => c.classList.remove('active'));
+  allBtns.forEach(b => b.classList.remove('active'));
+  const target = document.getElementById('tab-' + section + '-' + tab);
+  if (target) target.classList.add('active');
+  // Activate corresponding button
+  allBtns.forEach(b => {
+    if (b.getAttribute('onclick') && b.getAttribute('onclick').includes("'" + tab + "'")) {
+      b.classList.add('active');
+    }
+  });
+}
+
+// ===== MODALS =====
+function openModal(id) {
+  document.getElementById(id).classList.add('open');
+}
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+document.addEventListener('click', function(e) {
+  if (e.target.classList.contains('modal-overlay')) {
+    e.target.classList.remove('open');
+  }
+});
+
+// ===== FILE UPLOAD =====
+function showFileName(input, labelId) {
+  const label = document.getElementById(labelId);
+  if (input.files && input.files[0]) {
+    label.textContent = '✅ ' + input.files[0].name;
+    label.style.display = 'block';
+    input.closest('.file-upload').style.borderColor = 'var(--success)';
+  }
+}
+function previewImage(input) {
+  const preview = document.getElementById('postPreview');
+  const img = document.getElementById('postPreviewImg');
+  if (input.files && input.files[0]) {
+    const reader = new FileReader();
+    reader.onload = e => { img.src = e.target.result; preview.style.display = 'block'; };
+    reader.readAsDataURL(input.files[0]);
+  }
+}
+
+// ===== CALENDAR =====
+function initCalendar() {
+  const now = new Date();
+  calYear = now.getFullYear();
+  calMonth = now.getMonth();
+  renderCalendar();
+}
+function prevMonth() { calMonth--; if(calMonth<0){calMonth=11;calYear--;} renderCalendar(); }
+function nextMonth() { calMonth++; if(calMonth>11){calMonth=0;calYear++;} renderCalendar(); }
+function renderCalendar() {
+  const monthNames = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+  document.getElementById('calTitle').textContent = monthNames[calMonth] + ' ' + calYear;
+  const grid = document.getElementById('calGrid');
+  grid.innerHTML = '';
+  const days = ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
+  days.forEach(d => {
+    const h = document.createElement('div');
+    h.className = 'cal-day-header';
+    h.textContent = d;
+    grid.appendChild(h);
+  });
+  const first = new Date(calYear, calMonth, 1);
+  const lastDay = new Date(calYear, calMonth+1, 0).getDate();
+  let startDow = first.getDay(); // 0=Sun
+  startDow = startDow === 0 ? 6 : startDow - 1; // Mon=0
+  const today = new Date();
+  // Fake events
+  const events = {
+    [formatD(calYear,calMonth,14)]: [{text:'RDV Marie D.', cls:'blue'}],
+    [formatD(calYear,calMonth,16)]: [{text:'Entretien RH', cls:'green'},{text:'RDV Jean-P.', cls:'blue'}],
+    [formatD(calYear,calMonth,21)]: [{text:'RDV x3', cls:'blue'},{text:'Audit', cls:'orange'}],
+    [formatD(calYear,calMonth,23)]: [{text:'CNSS Envoi', cls:'green'}],
+    [formatD(calYear,calMonth,28)]: [{text:'CNSS Auto', cls:'orange'}],
+  };
+  for (let i=0; i<startDow; i++) {
+    const d = document.createElement('div');
+    d.className = 'cal-day other-month';
+    grid.appendChild(d);
+  }
+  for (let d=1; d<=lastDay; d++) {
+    const cell = document.createElement('div');
+    const dow = (startDow + d - 1) % 7;
+    const isToday = d===today.getDate() && calMonth===today.getMonth() && calYear===today.getFullYear();
+    const isWeekend = dow >= 5;
+    cell.className = 'cal-day' + (isToday?' today':'') + (isWeekend?' weekend':'');
+    cell.innerHTML = '<div class="cal-day-num">' + d + '</div>';
+    const key = formatD(calYear,calMonth,d);
+    if (events[key]) {
+      events[key].forEach(ev => {
+        const span = document.createElement('div');
+        span.className = 'cal-event ' + ev.cls;
+        span.textContent = ev.text;
+        cell.appendChild(span);
+      });
+    }
+    cell.onclick = () => openCalModal(calYear, calMonth, d);
+    grid.appendChild(cell);
+  }
+}
+function formatD(y,m,d) { return y+'-'+(m+1)+'-'+d; }
+function openCalModal(y, m, d) {
+  const monthNames = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+  document.getElementById('calModalTitle').textContent = '📅 RDV — ' + d + ' ' + monthNames[m] + ' ' + y;
+  const dateStr = y + '-' + String(m+1).padStart(2,'0') + '-' + String(d).padStart(2,'0');
+  document.getElementById('calModalDate').value = dateStr;
+  openModal('modalCalRDV');
+}
+
+// ===== ROLE-BASED DATA FILTERING =====
+function nameMatches(tableOwner, loginName) {
+  const norm = s => s.toLowerCase().trim().replace(/\s+/,' ');
+  const a = norm(tableOwner);
+  const b = norm(loginName);
+  if (a === b) return true;
+  const parts = b.split(' ');
+  if (parts.length === 2) return a === norm(parts[1] + ' ' + parts[0]);
+  return false;
+}
+function applyDataFilters() {
+  const restricted = ['commercial','televendeur'];
+  const isRestricted = restricted.includes(currentRole);
+  ['leads-filter-banner','rdv-filter-banner','contrats-filter-banner'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('visible', isRestricted);
+  });
+  document.querySelectorAll('tr[data-owner]').forEach(row => {
+    if (!isRestricted) { row.style.display = ''; return; }
+    const owner = row.getAttribute('data-owner');
+    const matches = owner === '__unassigned__'
+      ? currentRole === 'commercial'
+      : nameMatches(owner, currentUser);
+    row.style.display = matches ? '' : 'none';
+  });
+  if (isRestricted) updatePersonalBadges();
+}
+function updatePersonalBadges() {
+  const visible = (secId) => document.querySelectorAll('#'+secId+' tr[data-owner]:not([style*="none"])').length;
+  const bl = document.getElementById('badge-leads');
+  const br = document.getElementById('badge-rdv');
+  const bc = document.getElementById('badge-contrats');
+  if (bl) bl.textContent = visible('sec-leads');
+  if (br) br.textContent = visible('sec-rdv');
+  if (bc) bc.textContent = visible('sec-contrats');
+}
+
+// ===== CHARTS =====
+function initCharts() {
+  const copts = {responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#94a3b8',font:{size:11}}}},scales:{x:{ticks:{color:'#94a3b8'},grid:{color:'#2d3158'}},y:{ticks:{color:'#94a3b8'},grid:{color:'#2d3158'}}}};
+  const perfCtx = document.getElementById('chartPerf');
+  if (perfCtx) new Chart(perfCtx, {type:'line',data:{labels:['Jan','Fév','Mar','Avr','Mai'],datasets:[{label:'Leads',data:[180,210,245,280,312],borderColor:'#4f8ef7',tension:.4,fill:false},{label:'Contrats',data:[45,52,68,78,86],borderColor:'#22c55e',tension:.4,fill:false}]},options:copts});
+  const contratsCtx = document.getElementById('chartContrats');
+  if (contratsCtx) new Chart(contratsCtx, {type:'doughnut',data:{labels:['Neoliane','Alptis','SPVIE'],datasets:[{data:[45,28,27],backgroundColor:['#4f8ef7','#7c5cbf','#22c55e'],borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#94a3b8',font:{size:11}},position:'bottom'}}}});
+  const campCtx = document.getElementById('chartCampagnes');
+  if (campCtx) new Chart(campCtx, {type:'bar',data:{labels:['J1','J3','J7','J15'],datasets:[{label:'Envoyés',data:[312,189,143,87],backgroundColor:'rgba(79,142,247,.3)'},{label:'Ouvertures',data:[132,64,40,0],backgroundColor:'rgba(34,197,94,.5)'},{label:'Réponses',data:[43,18,11,0],backgroundColor:'rgba(245,158,11,.5)'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#94a3b8',font:{size:10}}}},scales:{x:{ticks:{color:'#94a3b8'},grid:{color:'#2d3158'}},y:{ticks:{color:'#94a3b8'},grid:{color:'#2d3158'}}}}});
+  const funnelCtx = document.getElementById('chartFunnel');
+  if (funnelCtx) new Chart(funnelCtx, {type:'bar',data:{labels:['Envoyés','Ouvertures','Réponses','RDV','Signés'],datasets:[{data:[731,276,72,36,18],backgroundColor:['#4f8ef7','#7c5cbf','#f59e0b','#22c55e','#ef4444']}]},options:{responsive:true,maintainAspectRatio:false,indexAxis:'y',plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#94a3b8'},grid:{color:'#2d3158'}},y:{ticks:{color:'#94a3b8'},grid:{color:'#2d3158'}}}}});
+  const comCtx = document.getElementById('chartCommercial');
+  if (comCtx) new Chart(comCtx, {type:'bar',data:{labels:['Nicolas R.','Dupont J.','Bernard P.','Martin S.'],datasets:[{label:'Leads',data:[87,63,54,48],backgroundColor:'rgba(79,142,247,.5)'},{label:'Contrats',data:[22,18,14,12],backgroundColor:'rgba(34,197,94,.5)'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#94a3b8',font:{size:10}}}},scales:{x:{ticks:{color:'#94a3b8'},grid:{color:'#2d3158'}},y:{ticks:{color:'#94a3b8'},grid:{color:'#2d3158'}}}}});
+}
+</script>
+</body>
+</html>
